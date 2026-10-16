@@ -1,0 +1,27 @@
+{
+ "features": [
+  "log_thickness",
+  "log_distance",
+  "view_cos",
+  "log_neighbours",
+  "upright",
+  "log_points",
+  "log_patch_thickness",
+  "flatness"
+ ],
+ "coef": [
+  -2.7941410659868855,
+  0.06073282410649508,
+  -0.10114665155833423,
+  0.09632461969390213,
+  0.056793288276481904,
+  -0.04906249913625171,
+  -0.15775189937410045,
+  0.20893381699274494,
+  0.15597966295978977
+ ],
+ "floor_m": 0.01,
+ "trained_on": "wedding-venue-1-hand-reference",
+ "n_patches": 18425,
+ "partner_m": 0.2
+}

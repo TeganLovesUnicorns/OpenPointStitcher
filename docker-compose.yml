@@ -1,0 +1,51 @@
+# docker compose run --rm stitcher <command>. Set SCANS and OUT in a .env file.
+# STITCH_VERSION must match open_point_stitch/__init__.py; the launchers read it automatically.
+services:
+  stitcher:
+    build: .
+    image: open-point-stitcher:${STITCH_VERSION:-0.50.0}
+    volumes:
+      # Your scans, mounted READ ONLY. Nothing in this tool can write to your
+      # originals, and that is enforced by the mount rather than by trust.
+      - "${SCANS:-./scans}:/scans:ro"
+      - "${OUT:-./out}:/out"
+      # the pair the regression test checks
+      - "${SCANS_REGRESSION:-./scans-regression}:/scans-regression:ro"
+    # Cap the cores this run may use, so it does not take the whole machine.
+    # Leave it out to let it use everything.
+    environment:
+      # 32 means "don't cap it"
+      - OMP_NUM_THREADS=${THREADS:-32}
+      - OPENBLAS_NUM_THREADS=${THREADS:-32}
+      - MKL_NUM_THREADS=${THREADS:-32}
+      - NUMEXPR_NUM_THREADS=${THREADS:-32}
+
+  # The bench: http://localhost:8080. /scans is the read-only import source; /projects is read-write.
+  bench:
+    build: .
+    image: open-point-stitcher:${STITCH_VERSION:-0.50.0}
+    command: bench
+    volumes:
+      - "${SCANS:-./scans}:/scans:ro"
+      - "${OUT:-./out}:/out"
+      - "${PROJECTS:-./projects}:/projects"
+    ports:
+      # Loopback only; do not change to "8080:8080".
+      - "127.0.0.1:8080:8080"
+
+  # Same image with the GPU passed through (WSL2 backend and a current NVIDIA driver on Windows).
+  # Check with: docker compose run --rm gpu gpu-info
+  gpu:
+    build: .
+    image: open-point-stitcher:${STITCH_VERSION:-0.50.0}
+    volumes:
+      - "${SCANS:-./scans}:/scans:ro"
+      - "${OUT:-./out}:/out"
+      - "${SCANS_REGRESSION:-./scans-regression}:/scans-regression:ro"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -1,0 +1,483 @@
+{
+  "schema": "open_point_stitch.placement.v1",
+  "note": "per-scan yaw and position from the placement bench; scans are gravity levelled",
+  "scans": [
+    {
+      "name": "GR from entry",
+      "yaw_deg": 157.739,
+      "x_m": 41.1972,
+      "y_m": -6.4794,
+      "z_m": -0.4171,
+      "human_yaw_deg": 157.739,
+      "human_x_m": 41.1972,
+      "human_y_m": -6.4794,
+      "human_z_m": -0.4171,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -2.5962,
+      "level_rotation": [
+        [
+          0.99998411,
+          -9.26e-06,
+          0.00563728
+        ],
+        [
+          -9.26e-06,
+          0.9999946,
+          0.0032865
+        ],
+        [
+          -0.00563728,
+          -0.0032865,
+          0.99997871
+        ]
+      ],
+      "floor_band_m": 2.645,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "HL Aisle 2",
+      "yaw_deg": -1.094,
+      "x_m": 39.7844,
+      "y_m": -13.5589,
+      "z_m": 0.6957,
+      "human_yaw_deg": -1.094,
+      "human_x_m": 39.7844,
+      "human_y_m": -13.5589,
+      "human_z_m": 0.6957,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -1.4686,
+      "level_rotation": [
+        [
+          0.99998334,
+          -5.875e-05,
+          0.00577212
+        ],
+        [
+          -5.875e-05,
+          0.99979284,
+          0.02035363
+        ],
+        [
+          -0.00577212,
+          -0.02035363,
+          0.99977618
+        ]
+      ],
+      "floor_band_m": 1.032,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "HL aisle 1",
+      "yaw_deg": 259.03,
+      "x_m": 37.7792,
+      "y_m": -5.0235,
+      "z_m": 0.6889,
+      "human_yaw_deg": 259.03,
+      "human_x_m": 37.7792,
+      "human_y_m": -5.0235,
+      "human_z_m": 0.6889,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -1.4895,
+      "level_rotation": [
+        [
+          0.99978945,
+          -5.688e-05,
+          -0.02051972
+        ],
+        [
+          -5.688e-05,
+          0.99998463,
+          -0.00554368
+        ],
+        [
+          0.02051972,
+          0.00554368,
+          0.99977408
+        ]
+      ],
+      "floor_band_m": 2.114,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "HR Aisle 1",
+      "yaw_deg": -96.227,
+      "x_m": 31.9758,
+      "y_m": -13.0658,
+      "z_m": 0.8854,
+      "human_yaw_deg": -96.227,
+      "human_x_m": 31.9758,
+      "human_y_m": -13.0658,
+      "human_z_m": 0.8854,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -1.4283,
+      "level_rotation": [
+        [
+          0.99972184,
+          -9.34e-05,
+          -0.02358447
+        ],
+        [
+          -9.34e-05,
+          0.99996864,
+          -0.00791914
+        ],
+        [
+          0.02358447,
+          0.00791914,
+          0.99969048
+        ]
+      ],
+      "floor_band_m": 1.236,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "HR Aisle 2",
+      "yaw_deg": -201.792,
+      "x_m": 31.8778,
+      "y_m": -5.7995,
+      "z_m": 0.8222,
+      "human_yaw_deg": -201.792,
+      "human_x_m": 31.8778,
+      "human_y_m": -5.7995,
+      "human_z_m": 0.8222,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -1.5446,
+      "level_rotation": [
+        [
+          0.99995758,
+          0.00010008,
+          0.00920995
+        ],
+        [
+          0.00010008,
+          0.99976388,
+          -0.02172964
+        ],
+        [
+          -0.00920995,
+          0.02172964,
+          0.99972146
+        ]
+      ],
+      "floor_band_m": 1.185,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "entryway",
+      "yaw_deg": 121.029,
+      "x_m": 40.7467,
+      "y_m": -4.7094,
+      "z_m": -0.1781,
+      "human_yaw_deg": 121.029,
+      "human_x_m": 40.7467,
+      "human_y_m": -4.7094,
+      "human_z_m": -0.1781,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -2.1522,
+      "level_rotation": [
+        [
+          0.99990613,
+          5.679e-05,
+          0.01370147
+        ],
+        [
+          5.679e-05,
+          0.99996565,
+          -0.00828849
+        ],
+        [
+          -0.01370147,
+          0.00828849,
+          0.99987178
+        ]
+      ],
+      "floor_band_m": 3.07,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "green room",
+      "yaw_deg": 29.731,
+      "x_m": 42.3747,
+      "y_m": -10.4299,
+      "z_m": 0.7573,
+      "human_yaw_deg": 29.731,
+      "human_x_m": 42.3747,
+      "human_y_m": -10.4299,
+      "human_z_m": 0.7573,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -1.5012,
+      "level_rotation": [
+        [
+          0.99988226,
+          3.414e-05,
+          0.01534506
+        ],
+        [
+          3.414e-05,
+          0.9999901,
+          -0.00444938
+        ],
+        [
+          -0.01534506,
+          0.00444938,
+          0.99987236
+        ]
+      ],
+      "floor_band_m": 1.829,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "house from green room 1",
+      "yaw_deg": 82.675,
+      "x_m": 41.5472,
+      "y_m": -9.8215,
+      "z_m": 0.7307,
+      "human_yaw_deg": 82.675,
+      "human_x_m": 41.5472,
+      "human_y_m": -9.8215,
+      "human_z_m": 0.7307,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -1.5978,
+      "level_rotation": [
+        [
+          0.99916803,
+          -0.00013639,
+          0.04078279
+        ],
+        [
+          -0.00013639,
+          0.99997764,
+          0.00668579
+        ],
+        [
+          -0.04078279,
+          -0.00668579,
+          0.99914567
+        ]
+      ],
+      "floor_band_m": 2.231,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "house from green room 2",
+      "yaw_deg": 23.205,
+      "x_m": 40.2691,
+      "y_m": -13.0131,
+      "z_m": 0.7398,
+      "human_yaw_deg": 23.205,
+      "human_x_m": 40.2691,
+      "human_y_m": -13.0131,
+      "human_z_m": 0.7398,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -1.6366,
+      "level_rotation": [
+        [
+          0.99889447,
+          0.00038473,
+          0.04700732
+        ],
+        [
+          0.00038473,
+          0.99986611,
+          -0.01635893
+        ],
+        [
+          -0.04700732,
+          0.01635893,
+          0.99876058
+        ]
+      ],
+      "floor_band_m": 1.455,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "mix position",
+      "yaw_deg": 114.033,
+      "x_m": 33.1501,
+      "y_m": -3.574,
+      "z_m": 0.7508,
+      "human_yaw_deg": 114.033,
+      "human_x_m": 33.1501,
+      "human_y_m": -3.574,
+      "human_z_m": 0.7508,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -1.4366,
+      "level_rotation": [
+        [
+          0.99990286,
+          5.227e-05,
+          0.01393792
+        ],
+        [
+          5.227e-05,
+          0.99997188,
+          -0.00749958
+        ],
+        [
+          -0.01393792,
+          0.00749958,
+          0.99987474
+        ]
+      ],
+      "floor_band_m": 1.565,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "seating 1",
+      "yaw_deg": 159.237,
+      "x_m": 33.3672,
+      "y_m": -13.7987,
+      "z_m": 0.9107,
+      "human_yaw_deg": 159.237,
+      "human_x_m": 33.3672,
+      "human_y_m": -13.7987,
+      "human_z_m": 0.9107,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -1.4267,
+      "level_rotation": [
+        [
+          0.99999654,
+          2.699e-05,
+          0.00262875
+        ],
+        [
+          2.699e-05,
+          0.99978915,
+          -0.02053409
+        ],
+        [
+          -0.00262875,
+          0.02053409,
+          0.9997857
+        ]
+      ],
+      "floor_band_m": 2.081,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "seating 2",
+      "yaw_deg": -130.926,
+      "x_m": 35.3101,
+      "y_m": -10.2186,
+      "z_m": 0.8538,
+      "human_yaw_deg": -130.926,
+      "human_x_m": 35.3101,
+      "human_y_m": -10.2186,
+      "human_z_m": 0.8538,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -1.2544,
+      "level_rotation": [
+        [
+          0.99902823,
+          -3.35e-06,
+          -0.04407497
+        ],
+        [
+          -3.35e-06,
+          0.99999999,
+          -0.00015184
+        ],
+        [
+          0.04407497,
+          0.00015184,
+          0.99902821
+        ]
+      ],
+      "floor_band_m": 2.335,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "seats back 1",
+      "yaw_deg": -185.464,
+      "x_m": 33.8178,
+      "y_m": -3.8267,
+      "z_m": 0.8222,
+      "human_yaw_deg": -185.464,
+      "human_x_m": 33.8178,
+      "human_y_m": -3.8267,
+      "human_z_m": 0.8222,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -1.4016,
+      "level_rotation": [
+        [
+          0.99998571,
+          3.335e-05,
+          0.00534551
+        ],
+        [
+          3.335e-05,
+          0.99992215,
+          -0.01247762
+        ],
+        [
+          -0.00534551,
+          0.01247762,
+          0.99990786
+        ]
+      ],
+      "floor_band_m": 2.509,
+      "alias": "",
+      "locked": false
+    },
+    {
+      "name": "stage",
+      "yaw_deg": 117.621,
+      "x_m": 35.4185,
+      "y_m": -15.3922,
+      "z_m": 0.7268,
+      "human_yaw_deg": 117.621,
+      "human_x_m": 35.4185,
+      "human_y_m": -15.3922,
+      "human_z_m": 0.7268,
+      "align_moved_m": 0,
+      "align_moved_deg": 0,
+      "floor_z_local_m": -2.1955,
+      "level_rotation": [
+        [
+          0.99981202,
+          -8.448e-05,
+          0.01938873
+        ],
+        [
+          -8.448e-05,
+          0.99996203,
+          0.00871387
+        ],
+        [
+          -0.01938873,
+          -0.00871387,
+          0.99977405
+        ]
+      ],
+      "floor_band_m": 2.5,
+      "alias": "",
+      "locked": false
+    }
+  ],
+  "anchors": []
+}

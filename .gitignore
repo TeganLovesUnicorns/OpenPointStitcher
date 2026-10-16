@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Local settings
+.env
+.claude/
+
+# Scans and generated output: large, and either someone's own scans or reproducible run artifacts
+scans/
+scans-regression/
+out/
+projects/
+*.pts
+*.pts.report.json
+*.pts.pairs.csv
+# The acceptance test's small synthetic scene is source, not data
+!tests/fixtures/acceptance_synth/*.pts
+
+# QA and scratch output
+out-qa/
+out-ab/
+out-corner/
+out-qa-run1.log
+out-devtest/
+out-labels/
+projects-qa/
+projects-verify/
+projects-verify2/
+projects-devtest/
+projects-labels/
+
+# Folders created by a mistyped Windows path
+open_point_stitch;C/
+out;C/
+scans;C/
+scans-regression;C/
+tools;C/
+
+# UI build: node_modules is reinstalled by npm; dist/ is spliced into placement_bench.html, which is tracked
+ui-src/node_modules/
+ui-src/dist/
+
+# Developer-only notes, working docs and private venue data
+notes/
+runs/
+golden/
+experiments/
+tools/measurements/
+CODE-NOTES.md
+CLAUDE.md
+HOW_WE_WORK.md
+MAP.md
+algorithms.md
+DOCKER.md
+QUICKSTART.md
+SETUP_WINDOWS.md
+tools/qa_canary.py
+tools/qa_bug_drill.py
+tools/check_docs.py
+tests/test_check_docs.py
+tests/test_bug_library.py
+tests/test_cancel_stages.py
+tests/test_score_walls.py
+tests/fixtures/end_user_14scan_placement.json
+tests/fixtures/labels/*
+!tests/fixtures/labels/wedding_venue_1_walls.json

@@ -1,0 +1,7 @@
+scans/
+runs/
+notes/
+**/__pycache__/
+*.pyc
+.git/
+*.zip

@@ -1,0 +1,18 @@
+# QA image: the shipping image plus a headless browser, so the bench can be tested automatically. Kept separate so
+# the shipping image never carries a test browser. STITCH_VERSION must name an already-built tool image.
+ARG STITCH_VERSION
+FROM open-point-stitcher:${STITCH_VERSION}
+
+# --with-deps installs the OS libraries headless Chromium needs along with the browser.
+# A fixed install path, because the container runs as the stitch user, not the root that installs the browser.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN pip install --no-cache-dir playwright==1.48.0 \
+    && playwright install --with-deps chromium
+
+# Test tools only: pyflakes (undefined names fail the quick layer) and coverage (qa --coverage). The .pth only
+# starts recording when COVERAGE_PROCESS_START is set.
+RUN pip install --no-cache-dir pyflakes==3.2.0 coverage==7.6.1 \
+    && echo "import os; os.environ.get('COVERAGE_PROCESS_START') and __import__('coverage').process_startup()" \
+       > "$(python -c 'import site; print(site.getsitepackages()[0])')/zz_coverage.pth"
+
+CMD ["qa"]
