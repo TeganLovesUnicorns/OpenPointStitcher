@@ -3,6 +3,10 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.50.1 (2026-10-16)
+
+- Licensed under the GNU AGPL v3. `LICENSE` and the third-party license list ship inside the Docker image.
+
 ## 0.50.0 (2026-10-16)
 
 - Renamed the project to **OpenPointStitcher**: package `open_point_stitch`, image `open-point-stitcher`, bench

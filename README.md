@@ -136,7 +136,18 @@ The real-scan tests need scan data that is not in this repository and skip clean
 Issues and pull requests are welcome. Please run `qa-quick` before sending a change, and `qa` for anything that
 touches alignment.
 
+By submitting a contribution you agree that it may be distributed under the AGPL and under any other license the
+project maintainer offers OpenPointStitcher under.
+
 ## License
 
-Not yet chosen; until a LICENSE file is added, all rights are reserved. Third-party components and their licenses
-are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+Copyright (C) 2026 the OpenPointStitcher authors.
+
+OpenPointStitcher is free software, licensed under the GNU Affero General Public License v3.0; see
+[LICENSE](LICENSE). It comes with no warranty. If you run a modified version as a service for others, the AGPL
+requires you to offer them its source.
+
+Commercial licenses for use outside the AGPL's terms may be available from the maintainer.
+
+Third-party components and their licenses are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md); all of
+them are compatible with the AGPL.

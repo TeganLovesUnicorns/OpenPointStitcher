@@ -28,7 +28,7 @@ COPY open_point_stitch/ ./open_point_stitch/
 COPY tools/ ./tools/
 COPY tests/ ./tests/
 COPY placement_bench.html splash.png ./
-COPY README.md CHANGELOG.md FIELD_GUIDE.md FAILURE_MODES.md ./
+COPY README.md CHANGELOG.md FIELD_GUIDE.md FAILURE_MODES.md LICENSE THIRD_PARTY_LICENSES.md ./
 COPY docker-entrypoint.sh /usr/local/bin/
 # A Windows checkout or editor can give the script CRLF endings, which breaks its first line.
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh

@@ -2,7 +2,8 @@
 
 OpenPointStitcher is built on the open-source components below. Their licenses are permissive (MIT, BSD, Apache 2.0,
 ISC, PSF, MPL 2.0) unless noted. Versions are the ones pinned in `requirements-lock.txt` and `ui-src/package-lock.json`.
-This list is a guide, not legal advice; each component's own license text, shipped with the component, is what
+None of them is GPL-2.0-only or otherwise incompatible with OpenPointStitcher's AGPL v3 license. This list is a
+guide, not legal advice; each component's own license text, shipped with the component, is what
 applies.
 
 ## Python packages (in the Docker image)
