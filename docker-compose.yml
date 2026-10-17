@@ -3,7 +3,7 @@
 services:
   stitcher:
     build: .
-    image: open-point-stitcher:${STITCH_VERSION:-0.50.2}
+    image: open-point-stitcher:${STITCH_VERSION:-0.50.3}
     volumes:
       # Your scans, mounted READ ONLY. Nothing in this tool can write to your
       # originals, and that is enforced by the mount rather than by trust.
@@ -23,7 +23,7 @@ services:
   # The bench: http://localhost:8080. /scans is the read-only import source; /projects is read-write.
   bench:
     build: .
-    image: open-point-stitcher:${STITCH_VERSION:-0.50.2}
+    image: open-point-stitcher:${STITCH_VERSION:-0.50.3}
     command: bench
     volumes:
       - "${SCANS:-./scans}:/scans:ro"
@@ -37,7 +37,7 @@ services:
   # Check with: docker compose run --rm gpu gpu-info
   gpu:
     build: .
-    image: open-point-stitcher:${STITCH_VERSION:-0.50.2}
+    image: open-point-stitcher:${STITCH_VERSION:-0.50.3}
     volumes:
       - "${SCANS:-./scans}:/scans:ro"
       - "${OUT:-./out}:/out"

@@ -184,7 +184,7 @@ def dxf_text(cut: PlanCut, note: str = "") -> str:
         polyline(poly, "SCAN_FOOTPRINTS", True)
     for name, x, y in cut.labels:
         text(x, y, 0.35, name, "SCAN_NAMES")
-    for box in cut.landmarks:                            # each named landmark's box from above. #named-landmarks
+    for box in cut.landmarks:                            # each named landmark's box from above
         polyline(cv2.convexHull(box.corners[:, :2].astype(np.float32))[:, 0, :], "LANDMARKS", True)
     for label, c in label_points(cut.landmarks):
         text(float(c[0]), float(c[1]), 0.2, label, "LANDMARKS")

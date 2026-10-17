@@ -3,6 +3,13 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.50.3 (2026-10-17)
+
+- The package is 38 modules instead of 60: each group of small modules that did one job together is now one file
+  (walls, wall checks, floors and ceilings, projects, the graphics card, the pose graph, jobs, explanations,
+  merging). Results are unchanged.
+- The server's jobs share one frame for the saved-placement check, errors, thread caps and Cancel reports.
+
 ## 0.50.2 (2026-10-17)
 
 - Shared code moved into `open_point_stitch/lib/` (poses, geometry, file saving, grouping, point clouds) and the

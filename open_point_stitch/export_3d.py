@@ -295,7 +295,7 @@ def dxf_text(surfaces: list[Surface], note: str = "", landmarks: list | None = N
             poly3d(o, s.layer)
         text = s.label + (f" (scans agree to {s.spread_m * 100:.0f} cm)" if len(s.scans) > 1 else "")
         label(np.concatenate(s.outlines).mean(axis=0), 0.15, text, "LABELS")
-    for box in landmarks or []:                                  # #named-landmarks
+    for box in landmarks or []:
         poly3d(box.corners[:4], "LANDMARKS")
         poly3d(box.corners[4:], "LANDMARKS")
     for text, c in label_points(landmarks or []):

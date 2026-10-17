@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
+import functools
 import dataclasses
 import datetime
 import json
@@ -508,10 +509,33 @@ def _normalise_incoming_placement(data: dict) -> dict:
 # jobs
 # ---------------------------------------------------------------------------
 
-class _null_ctx:
-    """Stand-in for limits.limited_to() when no thread cap was requested."""
-    def __enter__(self): return self
-    def __exit__(self, *a): return False
+def _thread_cap(params: dict):
+    """A one-shot thread cap for one stage when the page asked for one; otherwise a context that does nothing."""
+    threads = params.get("threads")
+    return limits.limited_to(int(threads)) if threads else contextlib.nullcontext()
+
+
+def _finish_cancelled(app: "App", job_id: str, what: str, exc: BaseException) -> None:
+    log.info("%s cancelled: %s", what, exc)
+    app.jobs.finish_cancelled(job_id, {"cancelled": True, "reason": str(exc)})
+
+
+def _job(failed: str, needs: Optional[str] = None):
+    """The frame every job function shares: when `needs` names the action, a saved placement must exist first; any
+    error reaches the job, not the log alone. Cancelling stays inside each job, where it knows what is written."""
+    def wrap(fn):
+        @functools.wraps(fn)
+        def run(app: "App", job_id: str, params: dict) -> None:
+            try:
+                if needs and not os.path.exists(_placement_path(app.out_dir)):
+                    app.jobs.fail(job_id, f"No saved placement yet. Save a placement before {needs}.")
+                    return
+                fn(app, job_id, params)
+            except Exception as exc:  # noqa: BLE001 - job errors must reach the job, not the log alone
+                log.exception(failed)
+                app.jobs.fail(job_id, f"{type(exc).__name__}: {exc}")
+        return run
+    return wrap
 
 
 def _anchors_from_placement(data: dict) -> list:
@@ -536,108 +560,104 @@ def _anchors_from_placement(data: dict) -> list:
     ] + anchors_from_landmarks(data.get("landmarks", []))     # same name in two scans
 
 
+@_job("align job failed")
 def _run_align(app: "App", job_id: str, params: dict) -> None:
-    try:
-        data = _read_placement(app.out_dir)
-        if data is None:
-            app.jobs.fail(job_id, "No saved placement yet. Save a placement before aligning.")
-            return
+    data = _read_placement(app.out_dir)
+    if data is None:
+        app.jobs.fail(job_id, "No saved placement yet. Save a placement before aligning.")
+        return
 
-        # Previews build in the background, so wait for them before aligning.
-        app.jobs.set_progress(job_id, "waiting for scan previews", "")
-        app.wait_for_all()
-        if app.build_errors:
-            log.warning("align: %d scan(s) never got a preview and will be "
-                        "treated as unknown: %s", len(app.build_errors),
-                        list(app.build_errors))
+    # Previews build in the background, so wait for them before aligning.
+    app.jobs.set_progress(job_id, "waiting for scan previews", "")
+    app.wait_for_all()
+    if app.build_errors:
+        log.warning("align: %d scan(s) never got a preview and will be "
+                    "treated as unknown: %s", len(app.build_errors),
+                    list(app.build_errors))
 
-        subset = params.get("scan_names")
-        subset_set = set(subset) if subset else None
-        threads = params.get("threads")
-        gpu = bool(params.get("gpu", False))  # accepted for interface completeness;
-        # align runs on the browser-preview point clouds, a few thousand
-        # points per scan, which is not the workload the GPU tensor path
-        # (open_point_stitch/align_gpu.py) was built for. Not wired up.
-        max_shift = float(params.get("max_shift_m", 1.0))
+    subset = params.get("scan_names")
+    subset_set = set(subset) if subset else None
+    gpu = bool(params.get("gpu", False))  # accepted for interface completeness;
+    # align runs on the browser-preview point clouds, a few thousand
+    # points per scan, which is not the workload the GPU tensor path
+    # (open_point_stitch/align_gpu.py) was built for. Not wired up.
+    max_shift = float(params.get("max_shift_m", 1.0))
 
-        poses = {}
-        locked = {}
-        for s in data["scans"]:
-            poses[s["name"]] = ScanPose.from_dict(s, strict=True)
-            locked[s["name"]] = bool(s.get("locked", False))
+    poses = {}
+    locked = {}
+    for s in data["scans"]:
+        poses[s["name"]] = ScanPose.from_dict(s, strict=True)
+        locked[s["name"]] = bool(s.get("locked", False))
 
-        anchors = _anchors_from_placement(data)
-        if not anchors:
-            app.jobs.fail(job_id, "No anchors in the saved placement. Draw anchors with the Anchor tool, or name "
-                                    "the same landmark in two scans in review, for the scans you want aligned.")
-            return
+    anchors = _anchors_from_placement(data)
+    if not anchors:
+        app.jobs.fail(job_id, "No anchors in the saved placement. Draw anchors with the Anchor tool, or name "
+                                "the same landmark in two scans in review, for the scans you want aligned.")
+        return
 
-        app.jobs.set_progress(job_id, "aligning", f"0/{len(anchors)} anchor(s)")
-        cap = limits.limited_to(int(threads)) if threads else _null_ctx()
+    app.jobs.set_progress(job_id, "aligning", f"0/{len(anchors)} anchor(s)")
+    cap = _thread_cap(params)
 
-        def progress_cb(done: int, total: int) -> None:
-            app.jobs.set_progress(job_id, "aligning", f"{done}/{total} anchor(s)")
+    def progress_cb(done: int, total: int) -> None:
+        app.jobs.set_progress(job_id, "aligning", f"{done}/{total} anchor(s)")
 
-        with cap:
-            result = align_from_anchors(app.payloads, poses, anchors, locked, subset_set,
-                                        scans_folder=app.scans_dir, max_shift_m=max_shift,
-                                        progress_cb=progress_cb,
-                                        should_cancel=lambda: app.jobs.is_cancel_requested(job_id))
+    with cap:
+        result = align_from_anchors(app.payloads, poses, anchors, locked, subset_set,
+                                    scans_folder=app.scans_dir, max_shift_m=max_shift,
+                                    progress_cb=progress_cb,
+                                    should_cancel=lambda: app.jobs.is_cancel_requested(job_id))
 
-        if result.cancelled:
-            # Cancelled: no pose written; whatever ran is kept only in the report.
-            report = {"rows": [], "skipped_anchors": result.skipped, "cancelled": True,
-                      "n_anchors": len(anchors), "n_anchors_completed": result.n_anchors_completed}
-            _write_align_anchors_report(app.out_dir, report)
-            app.jobs.finish_cancelled(job_id, report)
-            return
-
-        by_name = {s["name"]: s for s in data["scans"]}
-        pose_updates: dict[str, dict] = {}
-        for name, pose in result.poses.items():
-            s = by_name[name]
-            update = {
-                "yaw_deg": round(pose.yaw_deg, 4),
-                "x_m": round(pose.x_m, 5),
-                "y_m": round(pose.y_m, 5),
-                "z_m": round(pose.z_m, 5),
-                # align_from_anchors carries pitch/roll forward unchanged; written explicitly anyway.
-                "pitch_deg": round(pose.pitch_deg, 4),
-                "roll_deg": round(pose.roll_deg, 4),
-            }
-            human = ScanPose.from_dict(s, strict=True, prefix="human_")
-            if name in app.payloads:
-                update["align_moved_m"] = round(pose_shift_m(app.payloads[name], human, pose), 4)
-                update["align_moved_deg"] = round(yaw_gap_deg(pose.yaw_deg, s["human_yaw_deg"]), 3)
-            # else: this scan's preview never built, so align_from_anchors
-            # could not have moved it either (it can only move a scan whose
-            # payload it has); leave whatever align_moved_* it already had.
-            pose_updates[name] = update
-
-        def _apply(fresh: dict) -> None:
-            # Merge these pose updates onto what is on disk now, not the snapshot read at job start.
-            fresh_by_name = {s["name"]: s for s in fresh.get("scans", [])}
-            for name, update in pose_updates.items():
-                s = fresh_by_name.get(name)
-                if s is None:
-                    continue  # scan no longer in the placement
-                s.update(update)
-            _stamp_align(fresh, "align")
-            _stamp_last_run(fresh, "align", {
-                "n_anchors": len(anchors), "n_moved": len(pose_updates),
-                "n_skipped_anchors": len(result.skipped),
-            })
-
-        app.jobs.commit(job_id)                     # writing results from here; Cancel waits. #job-process
-        _write_placement_merged(app.out_dir, _apply)
-
-        report = {"rows": [vars(r) for r in result.rows], "skipped_anchors": result.skipped,
+    if result.cancelled:
+        # Cancelled: no pose written; whatever ran is kept only in the report.
+        report = {"rows": [], "skipped_anchors": result.skipped, "cancelled": True,
                   "n_anchors": len(anchors), "n_anchors_completed": result.n_anchors_completed}
         _write_align_anchors_report(app.out_dir, report)
-        app.jobs.finish(job_id, report)
-    except Exception as exc:  # noqa: BLE001 - job errors must reach the job, not the log alone
-        log.exception("align job failed")
-        app.jobs.fail(job_id, f"{type(exc).__name__}: {exc}")
+        app.jobs.finish_cancelled(job_id, report)
+        return
+
+    by_name = {s["name"]: s for s in data["scans"]}
+    pose_updates: dict[str, dict] = {}
+    for name, pose in result.poses.items():
+        s = by_name[name]
+        update = {
+            "yaw_deg": round(pose.yaw_deg, 4),
+            "x_m": round(pose.x_m, 5),
+            "y_m": round(pose.y_m, 5),
+            "z_m": round(pose.z_m, 5),
+            # align_from_anchors carries pitch/roll forward unchanged; written explicitly anyway.
+            "pitch_deg": round(pose.pitch_deg, 4),
+            "roll_deg": round(pose.roll_deg, 4),
+        }
+        human = ScanPose.from_dict(s, strict=True, prefix="human_")
+        if name in app.payloads:
+            update["align_moved_m"] = round(pose_shift_m(app.payloads[name], human, pose), 4)
+            update["align_moved_deg"] = round(yaw_gap_deg(pose.yaw_deg, s["human_yaw_deg"]), 3)
+        # else: this scan's preview never built, so align_from_anchors
+        # could not have moved it either (it can only move a scan whose
+        # payload it has); leave whatever align_moved_* it already had.
+        pose_updates[name] = update
+
+    def _apply(fresh: dict) -> None:
+        # Merge these pose updates onto what is on disk now, not the snapshot read at job start.
+        fresh_by_name = {s["name"]: s for s in fresh.get("scans", [])}
+        for name, update in pose_updates.items():
+            s = fresh_by_name.get(name)
+            if s is None:
+                continue  # scan no longer in the placement
+            s.update(update)
+        _stamp_align(fresh, "align")
+        _stamp_last_run(fresh, "align", {
+            "n_anchors": len(anchors), "n_moved": len(pose_updates),
+            "n_skipped_anchors": len(result.skipped),
+        })
+
+    app.jobs.commit(job_id)                     # writing results from here; Cancel waits
+    _write_placement_merged(app.out_dir, _apply)
+
+    report = {"rows": [vars(r) for r in result.rows], "skipped_anchors": result.skipped,
+              "n_anchors": len(anchors), "n_anchors_completed": result.n_anchors_completed}
+    _write_align_anchors_report(app.out_dir, report)
+    app.jobs.finish(job_id, report)
 
 
 def _decompose_pose(world_matrix: np.ndarray, level_rotation: np.ndarray,
@@ -822,7 +842,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
     """Automatic align: solve from full-resolution geometry with the same registration as the stitch CLI, then
     carry the result so the root scan keeps its placed pose. With use_anchors set, a second stage runs
     align_from_anchors on this stage's result before anything is written, as one combined run."""
-    if os.environ.get("OPENPOINT_DUMP_CANDIDATES"):          # measurement only: label recorded candidates by run (#answer-key)
+    if os.environ.get("OPENPOINT_DUMP_CANDIDATES"):          # measurement only: label recorded candidates by run
         os.environ["OPENPOINT_DUMP_RUN"] = job_id
     try:
         data = _read_placement(app.out_dir)
@@ -908,7 +928,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
         # Each with needs a fresh limited_to() (one-shot), and the cap must not wrap the concurrent pairwise stage
         # or it deadlocks.
         def _cap():
-            return limits.limited_to(int(threads)) if threads else _null_ctx()
+            return _thread_cap(params)
 
         t_align_start = time.time()
         marks = [("start", t_align_start)]       # stage timings for the report
@@ -1034,7 +1054,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
 
         if focus_scan and not any(r.accepted for r in results):
             # A re-check where no link held is an answer, not a failure: report it and move nothing.
-            app.jobs.commit(job_id)                 # writing results from here; Cancel waits. #job-process
+            app.jobs.commit(job_id)                 # writing results from here; Cancel waits
             result = {
                 "pairs": [r.as_row() for r in results],
                 "no_link_held": focus_scan,
@@ -1304,7 +1324,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
             payloads_now = wall_checks.with_wall_edits(dict(app.payloads), wall_checks.edits_by_scan(data))
         bent_report = _bent_scan_report(scans, _final_placements(placements, pose_updates), payloads_now)
         marks.append(("bent-scan check", time.time()))
-        app.jobs.commit(job_id)                     # writing results from here; Cancel waits. #job-process
+        app.jobs.commit(job_id)                     # writing results from here; Cancel waits
         _write_placement_merged(app.out_dir, _apply)
 
         result = {
@@ -1359,189 +1379,158 @@ def _landmarks_for_drawings(out_dir: str) -> list[dict]:
     return data.get("landmarks", []) if data.get("settings", {}).get("landmarks_in_drawings", True) else []
 
 
+@_job("export job failed", needs="exporting")
 def _run_export(app: "App", job_id: str, params: dict) -> None:
+    placement_path = _placement_path(app.out_dir)
+    gpu_requested = bool(params.get("gpu", False))
+    cfg = PipelineConfig(use_gpu=limits.resolve_use_gpu(gpu_requested),
+                         outlier_nb_neighbors=(20 if params.get("remove_strays") else None),
+                         outlier_std_ratio=float(params.get("stray_std_ratio") or 2.0))
+
+    def progress_cb(phase, detail):
+        app.jobs.set_progress(job_id, phase, detail)
+
+    output_path = _export_path(app.out_dir, "merged", "pts")
+    # Written under a .partial name and renamed only when complete, so a stopped export never leaves a file that
+    # looks finished.
+    partial_path = output_path[:-len(".pts")] + ".partial.pts"
+    cap = _thread_cap(params)
     try:
-        placement_path = _placement_path(app.out_dir)
-        if not os.path.exists(placement_path):
-            app.jobs.fail(job_id, "No saved placement yet. Save a placement before exporting.")
-            return
+        with cap:
+            outcome = place_merge(
+                scans_folder=app.scans_dir, placements_path=placement_path,
+                output_path=partial_path, cfg=cfg,
+                refine=bool(params.get("refine", False)),
+                refine_max_shift_m=float(params.get("refine_max_shift_m", 0.5)),
+                progress_cb=progress_cb,
+                should_cancel=lambda: app.jobs.is_cancel_requested(job_id),
+                keep_excluded=_export_keeps_excluded(app.out_dir),
+            )
+    except concurrent.futures.CancelledError as exc:
+        # Nothing has been written yet: place_merge writes output_path only after merging finishes, and
+        # should_cancel is only checked before that.
+        _finish_cancelled(app, job_id, "export", exc)
+        return
 
-        threads = params.get("threads")
-        gpu_requested = bool(params.get("gpu", False))
-        cfg = PipelineConfig(use_gpu=limits.resolve_use_gpu(gpu_requested),
-                             outlier_nb_neighbors=(20 if params.get("remove_strays") else None),
-                             outlier_std_ratio=float(params.get("stray_std_ratio") or 2.0))
-
-        def progress_cb(phase, detail):
-            app.jobs.set_progress(job_id, phase, detail)
-
-        output_path = _export_path(app.out_dir, "merged", "pts")
-        # Written under a .partial name and renamed only when complete, so a stopped export never leaves a file that
-        # looks finished.
-        partial_path = output_path[:-len(".pts")] + ".partial.pts"
-        cap = limits.limited_to(int(threads)) if threads else _null_ctx()
-        try:
-            with cap:
-                outcome = place_merge(
-                    scans_folder=app.scans_dir, placements_path=placement_path,
-                    output_path=partial_path, cfg=cfg,
-                    refine=bool(params.get("refine", False)),
-                    refine_max_shift_m=float(params.get("refine_max_shift_m", 0.5)),
-                    progress_cb=progress_cb,
-                    should_cancel=lambda: app.jobs.is_cancel_requested(job_id),
-                    keep_excluded=_export_keeps_excluded(app.out_dir),
-                )
-        except concurrent.futures.CancelledError as exc:
-            # Nothing has been written yet: place_merge writes output_path only after merging finishes, and
-            # should_cancel is only checked before that.
-            log.info("export cancelled: %s", exc)
-            app.jobs.finish_cancelled(job_id, {"cancelled": True, "reason": str(exc)})
-            return
-
-        def _apply(fresh: dict) -> None:
-            _stamp_last_run(fresh, "export", {
-                "points": outcome.merged.n_points,
-                "n_skipped_no_placement": len(outcome.skipped_no_placement),
-            })
-
-        app.jobs.commit(job_id)                     # writing results from here; Cancel waits. #job-process
-        os.replace(partial_path, output_path)
-        _write_placement_merged(app.out_dir, _apply)
-        _note_latest_export(app.out_dir, merged=output_path)
-
-        app.jobs.finish(job_id, {
-            "output_path": output_path,
+    def _apply(fresh: dict) -> None:
+        _stamp_last_run(fresh, "export", {
             "points": outcome.merged.n_points,
-            "skipped_no_placement": outcome.skipped_no_placement,
-            "refine_log": outcome.refine_log,
+            "n_skipped_no_placement": len(outcome.skipped_no_placement),
         })
-    except Exception as exc:  # noqa: BLE001
-        log.exception("export job failed")
-        app.jobs.fail(job_id, f"{type(exc).__name__}: {exc}")
+
+    app.jobs.commit(job_id)                     # writing results from here; Cancel waits
+    os.replace(partial_path, output_path)
+    _write_placement_merged(app.out_dir, _apply)
+    _note_latest_export(app.out_dir, merged=output_path)
+
+    app.jobs.finish(job_id, {
+        "output_path": output_path,
+        "points": outcome.merged.n_points,
+        "skipped_no_placement": outcome.skipped_no_placement,
+        "refine_log": outcome.refine_log,
+    })
 
 
+@_job("plan export failed", needs="exporting a plan view")
 def _run_export_plan(app: "App", job_id: str, params: dict) -> None:
     """The plan-view drawing: a horizontal cut through the placed scans at full resolution, as a DXF and a preview
     picture in the project folder. The band is the bench's Z clip if the page sends one, otherwise 1.0 to 1.6 m
     above the typical floor."""
+    placement_path = _placement_path(app.out_dir)
+    loaded = load_placements(placement_path)
+    z_lo, z_hi = default_band(loaded.placements)
+    if params.get("z_lo") is not None and params.get("z_hi") is not None:
+        z_lo, z_hi = float(params["z_lo"]), float(params["z_hi"])
+    crop = None
+    if params.get("crop"):
+        c = params["crop"]
+        crop = (float(c.get("x_lo", -1e9)), float(c.get("x_hi", 1e9)), float(c.get("y_lo", -1e9)), float(c.get("y_hi", 1e9)))
+
+    app.jobs.set_progress(job_id, "loading scans", "full resolution")
+    app.wait_for_all()
+    scans = load_folder(app.scans_dir)
     try:
-        placement_path = _placement_path(app.out_dir)
-        if not os.path.exists(placement_path):
-            app.jobs.fail(job_id, "No saved placement yet. Save a placement before exporting a plan view.")
-            return
-        loaded = load_placements(placement_path)
-        z_lo, z_hi = default_band(loaded.placements)
-        if params.get("z_lo") is not None and params.get("z_hi") is not None:
-            z_lo, z_hi = float(params["z_lo"]), float(params["z_hi"])
-        crop = None
-        if params.get("crop"):
-            c = params["crop"]
-            crop = (float(c.get("x_lo", -1e9)), float(c.get("x_hi", 1e9)), float(c.get("y_lo", -1e9)), float(c.get("y_hi", 1e9)))
-
-        app.jobs.set_progress(job_id, "loading scans", "full resolution")
-        app.wait_for_all()
-        scans = load_folder(app.scans_dir)
-        threads = params.get("threads")
-        try:
-            with (limits.limited_to(int(threads)) if threads else _null_ctx()):
-                cut = plan_cut(scans, loaded.placements, for_export(loaded.exclusions, _export_keeps_excluded(app.out_dir)),
-                               z_lo, z_hi, crop,
-                               progress_cb=lambda phase, detail: app.jobs.set_progress(job_id, phase, detail),
-                               should_cancel=lambda: app.jobs.is_cancel_requested(job_id))
-        except concurrent.futures.CancelledError as exc:
-            log.info("plan export cancelled: %s", exc)
-            app.jobs.finish_cancelled(job_id, {"cancelled": True, "reason": str(exc)})
-            return
-        with app._lock:
-            payloads = dict(app.payloads)
-        cut.footprints = footprints_from_payloads(payloads, loaded.placements)
-        cut.landmarks = world_boxes(_landmarks_for_drawings(app.out_dir), loaded.placements)
-        stem = os.path.basename(_export_path(app.out_dir, "plan_view", "dxf"))[:-len(".dxf")]
-        app.jobs.commit(job_id)                     # writing results from here; Cancel waits. #job-process
-        info = write_plan(cut, project_mod.exports_dir(app.out_dir), note="cropped" if crop else "", stem=stem)
-        _note_latest_export(app.out_dir, plan_view_dxf=info["dxf_path"], plan_view_png=info["png_path"])
-        app.jobs.finish(job_id, info)
-    except Exception as exc:  # noqa: BLE001
-        log.exception("plan export failed")
-        app.jobs.fail(job_id, f"{type(exc).__name__}: {exc}")
+        with _thread_cap(params):
+            cut = plan_cut(scans, loaded.placements, for_export(loaded.exclusions, _export_keeps_excluded(app.out_dir)),
+                           z_lo, z_hi, crop,
+                           progress_cb=lambda phase, detail: app.jobs.set_progress(job_id, phase, detail),
+                           should_cancel=lambda: app.jobs.is_cancel_requested(job_id))
+    except concurrent.futures.CancelledError as exc:
+        _finish_cancelled(app, job_id, "plan export", exc)
+        return
+    with app._lock:
+        payloads = dict(app.payloads)
+    cut.footprints = footprints_from_payloads(payloads, loaded.placements)
+    cut.landmarks = world_boxes(_landmarks_for_drawings(app.out_dir), loaded.placements)
+    stem = os.path.basename(_export_path(app.out_dir, "plan_view", "dxf"))[:-len(".dxf")]
+    app.jobs.commit(job_id)                     # writing results from here; Cancel waits
+    info = write_plan(cut, project_mod.exports_dir(app.out_dir), note="cropped" if crop else "", stem=stem)
+    _note_latest_export(app.out_dir, plan_view_dxf=info["dxf_path"], plan_view_png=info["png_path"])
+    app.jobs.finish(job_id, info)
 
 
+@_job("3D export failed", needs="exporting")
 def _run_export_3d(app: "App", job_id: str, params: dict) -> None:
     """Floors, ceilings and walls of the placed scans as 3D planes in one DXF (and a top-down picture) in the
     project's exports folder."""
-    try:
-        placement_path = _placement_path(app.out_dir)
-        if not os.path.exists(placement_path):
-            app.jobs.fail(job_id, "No saved placement yet. Save a placement before exporting.")
-            return
-        loaded = load_placements(placement_path)
-        with open(placement_path) as fh:
-            data = json.load(fh)
-        app.wait_for_all()
-        with app._lock:
-            payloads = wall_checks.with_wall_edits(dict(app.payloads), wall_checks.edits_by_scan(data))
-        names = [n for n in loaded.placements if n in payloads]
-        pieces = find_floors_ceilings.pieces_for_scans(
-            app.scans_dir, os.path.join(app.out_dir, build_bench.CACHE_DIRNAME), payloads, data, names,
-            progress=lambda i, n, name: app.jobs.set_progress(job_id, "finding floors and ceilings",
-                                                              f"{i + 1}/{n}: {name}"))
-        paths = {os.path.splitext(os.path.basename(p))[0]: p for p in build_bench.find_scans(app.scans_dir)}
-        walls = {}
-        for i, n in enumerate(names):                       # each wall cut to where the scan really has wall
-            app.jobs.set_progress(job_id, "finding where each wall starts and stops", f"{i + 1}/{len(names)}: {n}")
-            pts = find_floors_ceilings.levelled_scan(paths[n], payloads[n]["level_rotation"], payloads[n]["floor_z"],
-                                                      find_floors_ceilings.scan_exclusions(data, n))
-            walls[n] = find_walls.wall_runs(pts, payloads[n].get("walls", []))
-        app.jobs.set_progress(job_id, "joining what several scans saw", "")
-        per_scan = {n: export_3d.scan_surfaces(n, pieces.get(n, []), walls[n], loaded.placements[n]) for n in names}
-        surfaces = export_3d.venue_surfaces(per_scan)
-        stem = os.path.basename(_export_path(app.out_dir, "surfaces_3d", "dxf"))[:-len(".dxf")]
-        app.jobs.commit(job_id)                     # writing results from here; Cancel waits. #job-process
-        boxes = world_boxes(_landmarks_for_drawings(app.out_dir), loaded.placements)
-        info = export_3d.write_3d(surfaces, project_mod.exports_dir(app.out_dir), stem=stem, landmarks=boxes)
-        _note_latest_export(app.out_dir, surfaces_3d_dxf=info["dxf_path"], surfaces_3d_png=info["png_path"])
-        app.jobs.finish(job_id, {**info, "scans_used": len(names), "scans_with_pieces": len(pieces)})
-    except Exception as exc:  # noqa: BLE001
-        log.exception("3D export failed")
-        app.jobs.fail(job_id, f"{type(exc).__name__}: {exc}")
+    placement_path = _placement_path(app.out_dir)
+    loaded = load_placements(placement_path)
+    with open(placement_path) as fh:
+        data = json.load(fh)
+    app.wait_for_all()
+    with app._lock:
+        payloads = wall_checks.with_wall_edits(dict(app.payloads), wall_checks.edits_by_scan(data))
+    names = [n for n in loaded.placements if n in payloads]
+    pieces = find_floors_ceilings.pieces_for_scans(
+        app.scans_dir, os.path.join(app.out_dir, build_bench.CACHE_DIRNAME), payloads, data, names,
+        progress=lambda i, n, name: app.jobs.set_progress(job_id, "finding floors and ceilings",
+                                                          f"{i + 1}/{n}: {name}"))
+    paths = {os.path.splitext(os.path.basename(p))[0]: p for p in build_bench.find_scans(app.scans_dir)}
+    walls = {}
+    for i, n in enumerate(names):                       # each wall cut to where the scan really has wall
+        app.jobs.set_progress(job_id, "finding where each wall starts and stops", f"{i + 1}/{len(names)}: {n}")
+        pts = find_floors_ceilings.levelled_scan(paths[n], payloads[n]["level_rotation"], payloads[n]["floor_z"],
+                                                  find_floors_ceilings.scan_exclusions(data, n))
+        walls[n] = find_walls.wall_runs(pts, payloads[n].get("walls", []))
+    app.jobs.set_progress(job_id, "joining what several scans saw", "")
+    per_scan = {n: export_3d.scan_surfaces(n, pieces.get(n, []), walls[n], loaded.placements[n]) for n in names}
+    surfaces = export_3d.venue_surfaces(per_scan)
+    stem = os.path.basename(_export_path(app.out_dir, "surfaces_3d", "dxf"))[:-len(".dxf")]
+    app.jobs.commit(job_id)                     # writing results from here; Cancel waits
+    boxes = world_boxes(_landmarks_for_drawings(app.out_dir), loaded.placements)
+    info = export_3d.write_3d(surfaces, project_mod.exports_dir(app.out_dir), stem=stem, landmarks=boxes)
+    _note_latest_export(app.out_dir, surfaces_3d_dxf=info["dxf_path"], surfaces_3d_png=info["png_path"])
+    app.jobs.finish(job_id, {**info, "scans_used": len(names), "scans_with_pieces": len(pieces)})
 
 
+@_job("wall thickness report failed", needs="measuring walls")
 def _run_wall_report(app: "App", job_id: str, params: dict) -> None:
     """How thick each wall reads on the placed scans, in inches, and which scan is off by how much."""
+    placement_path = _placement_path(app.out_dir)
+    loaded = load_placements(placement_path)
+    app.jobs.set_progress(job_id, "loading scans", "full resolution")
+    app.wait_for_all()
+    scans = load_folder(app.scans_dir)
+    with open(placement_path) as fh:
+        hand_walls = wall_checks.edits_by_scan(json.load(fh))
+    with app._lock:
+        payloads = wall_checks.with_wall_edits(dict(app.payloads), hand_walls)
     try:
-        placement_path = _placement_path(app.out_dir)
-        if not os.path.exists(placement_path):
-            app.jobs.fail(job_id, "No saved placement yet. Save a placement before measuring walls.")
-            return
-        loaded = load_placements(placement_path)
-        app.jobs.set_progress(job_id, "loading scans", "full resolution")
-        app.wait_for_all()
-        scans = load_folder(app.scans_dir)
-        with open(placement_path) as fh:
-            hand_walls = wall_checks.edits_by_scan(json.load(fh))
-        with app._lock:
-            payloads = wall_checks.with_wall_edits(dict(app.payloads), hand_walls)
-        threads = params.get("threads")
-        try:
-            with (limits.limited_to(int(threads)) if threads else _null_ctx()):
-                reports = measure_walls(scans, loaded.placements, payloads,
-                                        progress_cb=lambda phase, detail: app.jobs.set_progress(job_id, phase, detail),
-                                        should_cancel=lambda: app.jobs.is_cancel_requested(job_id))
-        except concurrent.futures.CancelledError as exc:
-            log.info("wall report cancelled: %s", exc)
-            app.jobs.finish_cancelled(job_id, {"cancelled": True, "reason": str(exc)})
-            return
-        rows = [dataclasses.asdict(r) for r in reports]
-        app.jobs.set_progress(job_id, "checking for bent scans", "")
-        bent = _bent_scan_report(scans, loaded.placements, payloads)
-        app.jobs.commit(job_id)                     # writing results from here; Cancel waits. #job-process
-        path = os.path.join(project_mod.reports_dir(app.out_dir), "wall_thickness.json")
-        write_json_atomic(path, {"summary": summarise_walls(reports), "walls": rows, "bent_scans": bent}, indent=1)
-        app.jobs.finish(job_id, {"summary": summarise_walls(reports), "walls": rows[:40], "total_walls": len(rows),
-                                 "bent_scans": bent, "path": path})
-    except Exception as exc:  # noqa: BLE001
-        log.exception("wall thickness report failed")
-        app.jobs.fail(job_id, f"{type(exc).__name__}: {exc}")
+        with _thread_cap(params):
+            reports = measure_walls(scans, loaded.placements, payloads,
+                                    progress_cb=lambda phase, detail: app.jobs.set_progress(job_id, phase, detail),
+                                    should_cancel=lambda: app.jobs.is_cancel_requested(job_id))
+    except concurrent.futures.CancelledError as exc:
+        _finish_cancelled(app, job_id, "wall report", exc)
+        return
+    rows = [dataclasses.asdict(r) for r in reports]
+    app.jobs.set_progress(job_id, "checking for bent scans", "")
+    bent = _bent_scan_report(scans, loaded.placements, payloads)
+    app.jobs.commit(job_id)                     # writing results from here; Cancel waits
+    path = os.path.join(project_mod.reports_dir(app.out_dir), "wall_thickness.json")
+    write_json_atomic(path, {"summary": summarise_walls(reports), "walls": rows, "bent_scans": bent}, indent=1)
+    app.jobs.finish(job_id, {"summary": summarise_walls(reports), "walls": rows[:40], "total_walls": len(rows),
+                             "bent_scans": bent, "path": path})
 
 
 # ---------------------------------------------------------------------------
@@ -1711,7 +1700,7 @@ class App:
         self.jobs = JobStore(os.path.join(out_dir, "jobs"))
         self._lock = threading.Lock()
         self.payloads: dict[str, dict] = {}       # name -> full payload, once built
-        self.wire_cache: dict[str, tuple] = {}    # name -> (that payload, its encoded reply). #page-open-speed
+        self.wire_cache: dict[str, tuple] = {}    # name -> (that payload, its encoded reply)
         self.build_errors: dict[str, str] = {}    # name -> error message, if a build failed
         self.build_events: dict[str, threading.Event] = {}
         self.build_cached: dict[str, bool] = {}   # name -> True if served from cache
@@ -1977,8 +1966,11 @@ def make_handler(session: Session):
             self._json_bytes(status, json.dumps(payload, allow_nan=False).encode("utf-8"))
 
         def _json_bytes(self, status: int, body: bytes) -> None:
+            self._reply(status, body, "application/json")
+
+        def _reply(self, status: int, body: bytes, content_type: str) -> None:
             self.send_response(status)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -2006,11 +1998,7 @@ def make_handler(session: Session):
                 path, query = _split.path, urllib.parse.parse_qs(_split.query)
                 if path == "/" or path == "/index.html":
                     page = session.page_html  # one read: dev mode rebuilds this per access
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.send_header("Content-Length", str(len(page)))
-                    self.end_headers()
-                    self.wfile.write(page)
+                    self._reply(200, page, "text/html; charset=utf-8")
                 elif path == "/api/projects":
                     # Needs no open project; reports any running job for the switch-project dialog.
                     running = session.app.jobs.running_job() if session.app else None
@@ -2031,11 +2019,7 @@ def make_handler(session: Session):
                         return
                     with open(splash_path, "rb") as fh:
                         body = fh.read()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "image/png")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._reply(200, body, "image/png")
                 elif path.startswith("/api/projects/") and path.endswith("/" + THUMBNAIL_FILENAME):
                     # Per-project preview for the Open-existing modal; 404 if none yet.
                     name = urllib.parse.unquote(path[len("/api/projects/"):-len("/" + THUMBNAIL_FILENAME)])
@@ -2046,11 +2030,7 @@ def make_handler(session: Session):
                         return
                     with open(tpath, "rb") as fh:
                         body = fh.read()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "image/png")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
+                    self._reply(200, body, "image/png")
                 elif path == "/api/import-source":
                     self._json(200, {"scans": project_mod.list_import_source(session.import_source)})
                 elif path == "/api/scans":
@@ -2098,7 +2078,7 @@ def make_handler(session: Session):
                         error = app.build_errors.get(name)
                         kept = app.wire_cache.get(name)
                     if payload is not None:
-                        if kept is None or kept[0] is not payload:     # encoded once per preview. #page-open-speed
+                        if kept is None or kept[0] is not payload:     # encoded once per preview
                             kept = (payload, json.dumps(build_bench.flatten_xy_for_wire(payload),
                                                         allow_nan=False).encode("utf-8"))
                             with app._lock:
