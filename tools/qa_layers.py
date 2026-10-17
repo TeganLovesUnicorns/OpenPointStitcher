@@ -19,7 +19,7 @@ QUICK = [
     "tests/test_find_openings.py", "tests/test_adaptive_voxel.py", "tests/test_find_landmarks.py",
     "tests/test_find_elevations.py", "tests/test_offline_export.py", "tests/test_gpu_icp.py", "tests/test_check_docs.py",
     "tests/test_backup_retention.py", "tests/test_backup_cleaner.py", "tests/test_layout_error.py",
-    "tests/test_height_settle.py", "tests/test_explain_moves.py", "tests/test_measure_noise.py",
+    "tests/test_explain_moves.py", "tests/test_measure_noise.py",
     "tests/test_hand_moves.py",
     "tests/test_unix_line_endings.py", "tests/test_bug_library.py",
     "tests/test_reprocess.py", "tests/test_job_process.py", "tests/test_floors_ceilings.py",

@@ -61,8 +61,7 @@ from open_point_stitch.pts_file import load_folder
 from open_point_stitch import align_gravity, limits
 from open_point_stitch import project as project_mod
 from open_point_stitch import backup_cleaner
-from open_point_stitch import height_settle
-from open_point_stitch import floors_ceilings_cache
+from open_point_stitch import find_floors_ceilings
 from open_point_stitch import export_3d, find_walls, landmark_boxes
 from open_point_stitch import explain_moves
 from open_point_stitch import wall_checks
@@ -1235,12 +1234,12 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
             floor_marks = {n: v for n, v in floor_marks.items() if v}
             settle_pieces = None
             if params.get("settle_on_pieces", False):            # off by default
-                settle_pieces = floors_ceilings_cache.pieces_for_scans(
+                settle_pieces = find_floors_ceilings.pieces_for_scans(
                     app.scans_dir, os.path.join(app.out_dir, build_bench.CACHE_DIRNAME), app.payloads, data,
                     [s["name"] for s in data["scans"]],
                     progress=lambda i, n, name: app.jobs.set_progress(
                         job_id, "finding each scan's floors and ceilings", f"{i + 1}/{n}: {name}"))
-            settle_dz, settle_gaps = height_settle.settle(app.payloads, settle_poses, locked_names,
+            settle_dz, settle_gaps = find_floors_ceilings.settle(app.payloads, settle_poses, locked_names,
                                                           only=set(pose_updates) - locked_names, marks=floor_marks,
                                                           pieces=settle_pieces)
             for name, d in settle_dz.items():
@@ -1484,7 +1483,7 @@ def _run_export_3d(app: "App", job_id: str, params: dict) -> None:
         with app._lock:
             payloads = wall_checks.with_wall_edits(dict(app.payloads), wall_checks.edits_by_scan(data))
         names = [n for n in loaded.placements if n in payloads]
-        pieces = floors_ceilings_cache.pieces_for_scans(
+        pieces = find_floors_ceilings.pieces_for_scans(
             app.scans_dir, os.path.join(app.out_dir, build_bench.CACHE_DIRNAME), payloads, data, names,
             progress=lambda i, n, name: app.jobs.set_progress(job_id, "finding floors and ceilings",
                                                               f"{i + 1}/{n}: {name}"))
@@ -1492,8 +1491,8 @@ def _run_export_3d(app: "App", job_id: str, params: dict) -> None:
         walls = {}
         for i, n in enumerate(names):                       # each wall cut to where the scan really has wall
             app.jobs.set_progress(job_id, "finding where each wall starts and stops", f"{i + 1}/{len(names)}: {n}")
-            pts = floors_ceilings_cache.levelled_scan(paths[n], payloads[n]["level_rotation"], payloads[n]["floor_z"],
-                                                      floors_ceilings_cache.scan_exclusions(data, n))
+            pts = find_floors_ceilings.levelled_scan(paths[n], payloads[n]["level_rotation"], payloads[n]["floor_z"],
+                                                      find_floors_ceilings.scan_exclusions(data, n))
             walls[n] = find_walls.wall_runs(pts, payloads[n].get("walls", []))
         app.jobs.set_progress(job_id, "joining what several scans saw", "")
         per_scan = {n: export_3d.scan_surfaces(n, pieces.get(n, []), walls[n], loaded.placements[n]) for n in names}
@@ -1860,8 +1859,8 @@ class App:
             return None
         saved = _read_placement(self.out_dir) or {}
         return self._preview_pool.submit(
-            floors_ceilings_cache.cached_pieces, self._paths[name], self._cache_dir, payload["level_rotation"],
-            payload["floor_z"], floors_ceilings_cache.scan_exclusions(saved, name)).result()
+            find_floors_ceilings.cached_pieces, self._paths[name], self._cache_dir, payload["level_rotation"],
+            payload["floor_z"], find_floors_ceilings.scan_exclusions(saved, name)).result()
 
     def _build_one(self, path: str, cache_dir: str, exclusions: Optional[list] = None,
                    stairs: Optional[list] = None) -> None:

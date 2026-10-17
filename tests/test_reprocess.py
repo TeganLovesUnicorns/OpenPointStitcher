@@ -101,7 +101,7 @@ def _stairs_mark() -> Exclusion:
 
 
 def test_marked_stairs_stay_in_the_scan_but_are_not_taken_for_floors():
-    from open_point_stitch.height_settle import without_stairs
+    from open_point_stitch.find_floors_ceilings import without_stairs
     with tempfile.TemporaryDirectory() as tmp:
         path, cache = os.path.join(tmp, "room.pts"), os.path.join(tmp, ".bench_cache")
         _write_room_with_stairs(path)
