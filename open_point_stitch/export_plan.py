@@ -11,10 +11,9 @@ import cv2
 import numpy as np
 
 from .exclusions import filter_scan
-from .landmark_boxes import label_points
 from .lib.files import write_drawing
 from .lib.poses import tilt_matrix3
-from .placement import Exclusion, Placement
+from .placement import Exclusion, Placement, label_points
 from .pts_file import Scan
 
 log = logging.getLogger(__name__)
@@ -40,7 +39,7 @@ class PlanCut:
     bounds: tuple = (0.0, 0.0, 0.0, 0.0)
     points_in_cut: int = 0
     scans_used: int = 0
-    landmarks: list = field(default_factory=list)                # landmark_boxes.LandmarkBox, named in review
+    landmarks: list = field(default_factory=list)                # placement.LandmarkBox, named in review
 
 
 def default_band(placements: dict[str, Placement]) -> tuple[float, float]:

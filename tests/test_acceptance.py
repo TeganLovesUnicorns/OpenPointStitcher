@@ -90,7 +90,7 @@ def test_export_keeps_exclude_regions_and_cuts_exactly_the_removals():
     """On the written file: an exclude region stays in by default and is cut exactly when the setting says so; a
     review removal is always cut exactly. Counted independently with numpy; identity placement on purpose."""
     from open_point_stitch.config import PipelineConfig
-    from open_point_stitch.merge_placed import place_merge
+    from open_point_stitch.merge import place_merge
     from open_point_stitch.placement import SCHEMA
     from open_point_stitch.pts_file import read_pts
 

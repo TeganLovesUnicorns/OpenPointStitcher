@@ -36,11 +36,12 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 from open_point_stitch import __version__
 from open_point_stitch.config import PipelineConfig
-from open_point_stitch.jobs import JobStore
+from open_point_stitch.jobs import JobStore, run_job_in_process
 from open_point_stitch.align_anchors import align_from_anchors
 from open_point_stitch.align_tilt import apply_suggestions, full_resolution_inputs, near_share, suggest_tilt, summarise
 from open_point_stitch.overlap import nearest_distances
-from open_point_stitch.merge_placed import place_merge
+from open_point_stitch.merge import place_merge
+from open_point_stitch.placement import world_boxes
 from open_point_stitch.placement import (SCHEMA as PLACEMENT_SCHEMA, Anchor, AnchorMember, Exclusion, Placement,
                                     anchors_from_landmarks, is_placement_schema, load_placements,
                                     relative_transform)
@@ -61,11 +62,10 @@ from open_point_stitch.pts_file import load_folder
 from open_point_stitch import align_gravity, limits
 from open_point_stitch import project as project_mod
 from open_point_stitch import find_floors_ceilings
-from open_point_stitch import export_3d, find_walls, landmark_boxes
-from open_point_stitch import explain_moves
+from open_point_stitch import export_3d, find_walls
+from open_point_stitch import explain
 from open_point_stitch import wall_checks
-from open_point_stitch import job_process
-from open_point_stitch import measure_noise
+from open_point_stitch import point_trust
 import build_bench  # tools/build_bench.py: the one place a preview payload is built
 
 log = logging.getLogger(__name__)
@@ -557,7 +557,7 @@ def _run_align(app: "App", job_id: str, params: dict) -> None:
         gpu = bool(params.get("gpu", False))  # accepted for interface completeness;
         # align runs on the browser-preview point clouds, a few thousand
         # points per scan, which is not the workload the GPU tensor path
-        # (open_point_stitch/gpu_stages.py) was built for. Not wired up.
+        # (open_point_stitch/align_gpu.py) was built for. Not wired up.
         max_shift = float(params.get("max_shift_m", 1.0))
 
         poses = {}
@@ -804,16 +804,16 @@ def _explain_run_moves(placements: dict, pose_updates: dict, prepared: list, res
     outcomes = [r.as_row() for r in results]
     locked = {n for n, p in placements.items() if p.locked}
     if guard_on:
-        _, moves, links, offered = explain_moves.guard(points, start, final, outcomes, locked)
+        _, moves, links, offered = explain.guard(points, start, final, outcomes, locked)
     else:
-        links = explain_moves.measure_links(points, start, final, outcomes)
-        moves, offered = explain_moves.explain(points, start, final, links, locked), {}
+        links = explain.measure_links(points, start, final, outcomes)
+        moves, offered = explain.explain(points, start, final, links, locked), {}
     return {"moves": [{"scan": m.scan, "text": m.text, "moved_m": round(m.moved_m, 4), "turned_deg": round(m.turned_deg, 3),
                        "pulled_by": m.pulled_by, "held_by": m.held_by, "toward": m.toward,
                        "toward_is_stronger": m.toward_is_stronger, "guarded": m.guarded,
                        "hurt": [[o, round(b, 3), round(a, 3)] for o, b, a in m.hurt],
                        "helped": [[o, round(b, 3), round(a, 3)] for o, b, a in m.helped]} for m in moves],
-            "summary": {**explain_moves.summary(moves, links), "guard_on": guard_on},
+            "summary": {**explain.summary(moves, links), "guard_on": guard_on},
             "kept_back": sorted(offered),
             "suggestions": {n: {k: pose_updates[n][k] for k in ("yaw_deg", "x_m", "y_m", "z_m")} for n in offered}}
 
@@ -994,7 +994,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
 
         prepared_gpu = None
         if cfg.use_gpu_pipeline:
-            from open_point_stitch.align_pair_cuda import prepare_all_gpu
+            from open_point_stitch.align_gpu import prepare_all_gpu
             app.jobs.set_progress(job_id, "preparing scans on the GPU", f"{len(prepared)} scan(s)")
             prepared_gpu = prepare_all_gpu(prepared, cfg)
         marks.append(("preparing scans and finding features", time.time()))
@@ -1050,11 +1050,11 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
         noise_stage = None
         if params.get("noise_trust"):                   # diagnostics option
             app.jobs.set_progress(job_id, "measuring each scan's noise on flat walls", "")
-            noise = {s.name: measure_noise.scan_noise(s.name, s.points, placements[s.name].level_rotation)
+            noise = {s.name: point_trust.scan_noise(s.name, s.points, placements[s.name].level_rotation)
                      for s in scans if s.name in placements}
             for r in results:
                 if r.accepted and r.information is not None:
-                    r.information = r.information * measure_noise.pair_weight(noise.get(r.source_name),
+                    r.information = r.information * point_trust.pair_weight(noise.get(r.source_name),
                                                                                noise.get(r.target_name))
             noise_stage = {n: (None if v is None else round(v * 1000, 2)) for n, v in noise.items()}
 
@@ -1455,7 +1455,7 @@ def _run_export_plan(app: "App", job_id: str, params: dict) -> None:
         with app._lock:
             payloads = dict(app.payloads)
         cut.footprints = footprints_from_payloads(payloads, loaded.placements)
-        cut.landmarks = landmark_boxes.world_boxes(_landmarks_for_drawings(app.out_dir), loaded.placements)
+        cut.landmarks = world_boxes(_landmarks_for_drawings(app.out_dir), loaded.placements)
         stem = os.path.basename(_export_path(app.out_dir, "plan_view", "dxf"))[:-len(".dxf")]
         app.jobs.commit(job_id)                     # writing results from here; Cancel waits. #job-process
         info = write_plan(cut, project_mod.exports_dir(app.out_dir), note="cropped" if crop else "", stem=stem)
@@ -1497,7 +1497,7 @@ def _run_export_3d(app: "App", job_id: str, params: dict) -> None:
         surfaces = export_3d.venue_surfaces(per_scan)
         stem = os.path.basename(_export_path(app.out_dir, "surfaces_3d", "dxf"))[:-len(".dxf")]
         app.jobs.commit(job_id)                     # writing results from here; Cancel waits. #job-process
-        boxes = landmark_boxes.world_boxes(_landmarks_for_drawings(app.out_dir), loaded.placements)
+        boxes = world_boxes(_landmarks_for_drawings(app.out_dir), loaded.placements)
         info = export_3d.write_3d(surfaces, project_mod.exports_dir(app.out_dir), stem=stem, landmarks=boxes)
         _note_latest_export(app.out_dir, surfaces_3d_dxf=info["dxf_path"], surfaces_3d_png=info["png_path"])
         app.jobs.finish(job_id, {**info, "scans_used": len(names), "scans_with_pieces": len(pieces)})
@@ -2364,7 +2364,7 @@ def make_handler(session: Session):
                           "export_3d": _run_export_3d, "wall_report": _run_wall_report}[kind]
                     try:
                         # The job runs in its own process so Cancel can stop it anywhere.
-                        threading.Thread(target=job_process.run_job_in_process,
+                        threading.Thread(target=run_job_in_process,
                                          args=(app, job_id, f"open_point_stitch.server:{fn.__name__}", body),
                                          daemon=True).start()
                     except Exception:

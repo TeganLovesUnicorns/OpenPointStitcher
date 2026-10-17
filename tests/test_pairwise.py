@@ -541,7 +541,7 @@ def test_learned_trust_is_per_patch_and_scales_the_judge():
 def test_the_seed_judge_ranks_candidates_and_decides_whether_to_move():
     """A judge that likes proposals moves to one; a judge that dislikes them keeps the placement."""
     import dataclasses
-    from open_point_stitch import seed_judge as sj
+    from open_point_stitch import score as sj
     a, b, cfg = _two_rooms(20, [0.9, -0.6, 0.0])
     near = np.eye(4)
     near[:3, 3] = [0.94, -0.63, 0.0]

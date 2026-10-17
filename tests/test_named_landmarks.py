@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from open_point_stitch.export_3d import dxf_text as dxf_3d  # noqa: E402
 from open_point_stitch.export_plan import PlanCut, dxf_text as dxf_plan  # noqa: E402
-from open_point_stitch.landmark_boxes import world_boxes  # noqa: E402
+from open_point_stitch.placement import world_boxes  # noqa: E402
 from open_point_stitch.placement import SCHEMA, Placement, anchors_from_landmarks, load_placements  # noqa: E402
 
 

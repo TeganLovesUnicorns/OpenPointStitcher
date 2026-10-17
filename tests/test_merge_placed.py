@@ -1,4 +1,4 @@
-"""Tests for merge_placed.py's should_cancel: checked between full-resolution scan loads and between refine links,
+"""Tests for merge.place_merge's should_cancel: checked between full-resolution scan loads and between refine links,
 where a large export spends its time."""
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from concurrent.futures import CancelledError
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from open_point_stitch.config import PipelineConfig  # noqa: E402
-from open_point_stitch.merge_placed import place_merge  # noqa: E402
+from open_point_stitch.merge import place_merge  # noqa: E402
 from open_point_stitch.placement import SCHEMA  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))

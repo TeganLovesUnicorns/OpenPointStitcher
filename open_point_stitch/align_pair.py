@@ -25,9 +25,8 @@ from .find_walls import wall_candidates
 from .find_landmarks import landmark_candidates
 from .prepare import Prepared, aabb, density_preserving_thin, thin_rng
 from . import score as _verify
-from . import seed_judge as _seed_judge
 from .overlap import direct_overlap
-from . import explain_link as _why
+from . import explain as _why
 from .point_trust import (_MIDAIR, MIDAIR_MIN_W, THICK_FLOOR_M, midair_weight, point_weight,  # noqa: F401
                           surface_thickness)
 
@@ -51,7 +50,7 @@ class PairResult:
     n_correspondences: int = 0
     accepted: bool = False
     reason: str = ""
-    why: str = ""                          # `reason` in plain words, for the links table (explain_link.py)
+    why: str = ""                          # `reason` in plain words, for the links table (explain.py)
     method: str = ""
     seeded_from: str = "ransac"            # ransac | gravity | manual | identity
     tilt_deg: float = 0.0                  # how far the result tips vertical
@@ -202,7 +201,7 @@ def fine_register(src: Prepared, tgt: Prepared, init: np.ndarray, cfg: PipelineC
 
     if cfg.use_gpu:
         try:
-            from . import gpu_stages as _gpu
+            from . import align_gpu as _gpu
             device = _gpu.resolve_device(True)
             gs = _gpu.prepare_on_device(src.down, cfg, device, src.name,
                                         src.index, with_features=False)
@@ -478,7 +477,7 @@ def _reject_reason_from_gates(
     src_scan, tgt_scan, cfg: PipelineConfig, fitness_why: str = "",
 ) -> Optional[str]:
     """Reject reason, checked in order: fitness, RMSE, correspondences, overlap gate; None if accepted. On a reject,
-    res.why holds the failed check in plain words. Shared with align_pair_cuda.py so both paths use the same
+    res.why holds the failed check in plain words. Shared with align_gpu.py so both paths use the same
     criteria. The overlap gate is last because it is the most expensive."""
     if fitness_reject_reason is not None:
         res.why = fitness_why
@@ -574,7 +573,7 @@ def _dump_candidate(src: Prepared, tgt: Prepared, origin: str, status: str, verd
 
 def _judge_p(verdict, facts: dict) -> float:
     """The seed judge's probability that this candidate is right, from its verdict and its seed facts."""
-    return float(_seed_judge.predict(_seed_judge.load_model(), _seed_judge.clues({**vars(verdict), **facts}))[0])
+    return float(_verify.predict(_verify.load_model(), _verify.clues({**vars(verdict), **facts}))[0])
 
 
 def _pose_delta(seed: np.ndarray, other: np.ndarray) -> tuple[float, float]:
@@ -628,7 +627,7 @@ def _gpu_screen(src: Prepared, tgt: Prepared, candidates: list, cfg: PipelineCon
     if not _gpu_ready():
         return None
     try:
-        from .align_icp_gpu import ladder_batch
+        from .align_gpu import ladder_batch
         return ladder_batch(src, tgt, [start for _origin, start in candidates], cfg, max_iteration=cfg.gpu_screen_iterations)
     except Exception as exc:  # noqa: BLE001 - a GPU problem costs speed, never the result
         log.warning("%s -> %s: GPU screen failed (%s), using the CPU for this pair", src.name, tgt.name, exc)

@@ -1,4 +1,4 @@
-"""Tests for the GPU ICP (align_icp_gpu.py) and the screen-then-confirm path in register_pair: it agrees with the
+"""Tests for the GPU ICP (align_gpu.py) and the screen-then-confirm path in register_pair: it agrees with the
 CPU ICP, gives the same answer every run, hands the final answer to the CPU, and falls back to the CPU when there
 is no GPU or it fails. Tests that need a GPU skip without one."""
 from __future__ import annotations
@@ -57,7 +57,7 @@ def test_the_gpu_icp_agrees_with_the_cpu_icp():
     if not _card():
         print("    SKIP: no usable GPU here")
         return
-    from open_point_stitch.align_icp_gpu import cloud_for, icp_point_to_plane
+    from open_point_stitch.align_gpu import cloud_for, icp_point_to_plane
     a, b, cfg = _pair()
     init = np.eye(4)
     for dist in (0.3, 0.1, 0.04):
@@ -74,7 +74,7 @@ def test_a_batch_gives_each_start_the_answer_it_would_get_alone_and_repeats_exac
     if not _card():
         print("    SKIP: no usable GPU here")
         return
-    from open_point_stitch.align_icp_gpu import cloud_for, icp_point_to_plane, icp_point_to_plane_batch
+    from open_point_stitch.align_gpu import cloud_for, icp_point_to_plane, icp_point_to_plane_batch
     a, b, cfg = _pair()
     cs, ct = cloud_for(a), cloud_for(b)
     starts = [np.eye(4)]
@@ -115,11 +115,11 @@ def test_the_screen_and_confirm_path_returns_the_cpus_answer_for_its_winner():
 
 
 def test_the_from_scratch_gpu_pipeline_finds_a_synthetic_pair():
-    """align_pair_cuda, the path "Run automatic" takes with no placement and a card: no other test finishes it."""
+    """align_gpu's CUDA pair pipeline, the path "Run automatic" takes with no placement and a card: no other test finishes it."""
     if not _card():
         print("    SKIP: no usable GPU here")
         return
-    from open_point_stitch.align_pair_cuda import prepare_all_gpu, register_pair_cuda_gated
+    from open_point_stitch.align_gpu import prepare_all_gpu, register_pair_cuda_gated
     a, b, cfg = _pair(shift=(0.6, -0.4, 0.0), yaw_deg=20.0)
     ga, gb = prepare_all_gpu([a, b], cfg)
     r = register_pair_cuda_gated(a, b, ga, gb, cfg)
@@ -155,7 +155,7 @@ def test_a_gpu_failure_falls_back_to_the_cpu_instead_of_failing_the_pair():
     off = np.eye(4)
     off[:2, 3] = (0.12, -0.05)
     cpu = _run(a, b, cfg, off)
-    import open_point_stitch.align_icp_gpu as icp_gpu
+    import open_point_stitch.align_gpu as icp_gpu
     real_ready, real_ladder = align_pair._gpu_ready, icp_gpu.ladder_batch
     align_pair._gpu_ready = lambda: True
 

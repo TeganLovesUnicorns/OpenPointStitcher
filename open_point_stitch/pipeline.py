@@ -112,7 +112,7 @@ def run_pairwise(
 
         # No seed: register the smaller cloud into the larger one.
         if use_gpu_pipeline:
-            from .align_pair_cuda import register_pair_cuda_gated
+            from .align_gpu import register_pair_cuda_gated
             if a.n_down <= b.n_down:
                 return register_pair_cuda_gated(a, b, prepared_gpu[i], prepared_gpu[j], cfg,
                                                 src_scan=full_res_pair(a), tgt_scan=full_res_pair(b))
@@ -192,7 +192,7 @@ def stitch_folder(
 
     prepared_gpu = None
     if cfg.use_gpu_pipeline:
-        from .align_pair_cuda import prepare_all_gpu
+        from .align_gpu import prepare_all_gpu
         prepared_gpu = prepare_all_gpu(prepared, cfg)
         log.info("prepared %d scan(s) on the GPU for the unseeded path", len(prepared_gpu))
 

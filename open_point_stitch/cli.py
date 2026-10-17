@@ -329,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "place-merge":
         import time
-        from .merge_placed import place_merge
+        from .merge import place_merge
 
         cfg = PipelineConfig(voxel_size=args.voxel_size, output_precision=args.precision)
         report_path = args.report or (args.output + ".report.json")

@@ -1,4 +1,4 @@
-"""Tests for job_process.py: a job runs in its own process and Cancel stops it at any point, worker processes and
+"""Tests for jobs.py's job processes: a job runs in its own process and Cancel stops it at any point, worker processes and
 half-written files included, except once it is saving its results."""
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from open_point_stitch.job_process import run_job_in_process  # noqa: E402
+from open_point_stitch.jobs import run_job_in_process  # noqa: E402
 from open_point_stitch.jobs import JobStore  # noqa: E402
 
 ME = "test_job_process"            # this file, as the job processes import it

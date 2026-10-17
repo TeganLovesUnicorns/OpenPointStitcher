@@ -1,4 +1,4 @@
-"""Tests for align_graph_4dof.py: what the solve does with constraints that pin down some directions and not
+"""Tests for align_graph.py's 4 DOF solve: what the solve does with constraints that pin down some directions and not
 others."""
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from open_point_stitch.align_graph_4dof import Constraint, edge_information, robust_edge, solve  # noqa: E402
+from open_point_stitch.align_graph import Constraint, edge_information, robust_edge, solve_4dof  # noqa: E402
 
 ORIGIN = np.zeros(3)
 
@@ -34,33 +34,33 @@ def _constraint(normal, target, b="b", a="a"):
 def test_a_wall_pins_down_across_it_and_leaves_sliding_alone():
     """The whole reason for carrying information: a wall says nothing about where along itself a scan sits, so a
     sliding error in the target must not leak into the answer."""
-    got = solve([_constraint([1, 0, 0], [0.0, 0.3, 0.7, 0.2])], free=["b"])["b"]
+    got = solve_4dof([_constraint([1, 0, 0], [0.0, 0.3, 0.7, 0.2])], free=["b"])["b"]
     assert abs(got[1] - 0.3) < 0.01, got
     assert abs(got[2]) < 0.01 and abs(got[3]) < 0.01, f"sliding along the wall (y {got[2]:.3f}, z {got[3]:.3f}) leaked in"
 
 
 def test_two_walls_from_two_references_pin_down_both_directions():
     cons = [_constraint([1, 0, 0], [0.0, 0.3, 0.7, 0.0], a="a1"), _constraint([0, 1, 0], [0.0, -0.4, -0.2, 0.0], a="a2")]
-    got = solve(cons, free=["b"])["b"]
+    got = solve_4dof(cons, free=["b"])["b"]
     assert abs(got[1] - 0.3) < 0.01 and abs(got[2] + 0.2) < 0.01, got
 
 
 def test_a_scan_not_listed_as_free_does_not_move_and_is_not_returned():
-    got = solve([_constraint([1, 0, 0], [0.0, 0.3, 0.0, 0.0])], free=["b"])
+    got = solve_4dof([_constraint([1, 0, 0], [0.0, 0.3, 0.0, 0.0])], free=["b"])
     assert list(got) == ["b"]
-    got = solve([_constraint([1, 0, 0], [0.0, 0.3, 0.0, 0.0])], free=[])
+    got = solve_4dof([_constraint([1, 0, 0], [0.0, 0.3, 0.0, 0.0])], free=[])
     assert got == {}
 
 
 def test_a_relative_constraint_between_two_free_scans_is_shared_out_evenly():
-    got = solve([_constraint([1, 0, 0], [0.0, 0.3, 0.0, 0.0])], free=["a", "b"])
+    got = solve_4dof([_constraint([1, 0, 0], [0.0, 0.3, 0.0, 0.0])], free=["a", "b"])
     assert abs(got["b"][1] - 0.15) < 0.01 and abs(got["a"][1] + 0.15) < 0.01, got
 
 
 def test_yaw_is_solved_too():
     pts_b, pts_a, nrm, w = _plane_pairs([1, 0, 0])
     c = Constraint("b", "a", np.array([np.radians(2.0), 0.0, 0.0, 0.0]), edge_information(pts_b, pts_a, nrm, w, ORIGIN, ORIGIN))
-    got = solve([c], free=["b"])["b"]
+    got = solve_4dof([c], free=["b"])["b"]
     assert abs(np.degrees(got[0]) - 2.0) < 0.05, np.degrees(got[0])
 
 

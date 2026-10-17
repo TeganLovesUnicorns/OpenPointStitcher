@@ -1,4 +1,4 @@
-"""explain_link.py: the links table's plain-language sentences."""
+"""explain.py: the links table's plain-language sentences."""
 from __future__ import annotations
 
 import os
@@ -6,7 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from open_point_stitch import explain_link as w  # noqa: E402
+from open_point_stitch import explain as w  # noqa: E402
 
 
 def test_numbers_read_as_people_say_them():

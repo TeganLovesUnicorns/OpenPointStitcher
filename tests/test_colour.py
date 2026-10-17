@@ -1,4 +1,4 @@
-"""Tests for colour.py: hue families, local colour composition, and the tolerant agreement scores.
+"""Tests for score.py's colour opinion: hue families, local colour composition, and the tolerant agreement scores.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from open_point_stitch.config import PipelineConfig  # noqa: E402
-from open_point_stitch.colour import (  # noqa: E402
+from open_point_stitch.score import (  # noqa: E402
     hue_family, composition, composition_similarity, hue_agreement,
 )
 

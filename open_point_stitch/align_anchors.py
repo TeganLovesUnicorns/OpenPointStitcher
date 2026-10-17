@@ -2,7 +2,7 @@
 
 Each link is matched on the full-resolution points inside its two boxes; a box with too few points falls back to
 the whole scan's preview points. Corrections are 4 DOF (yaw, x, y, z): Open3D finds correspondences,
-lib.poses.solve_yaw_translation solves, and every link is then combined in one solve (align_graph_4dof)."""
+lib.poses.solve_yaw_translation solves, and every link is then combined in one solve (align_graph.solve_4dof)."""
 from __future__ import annotations
 
 import logging
@@ -13,7 +13,7 @@ from typing import Callable, Optional
 import numpy as np
 import open3d as o3d
 
-from . import align_graph_4dof as graph4
+from . import align_graph as graph4
 from .lib.clouds import as_cloud
 from .lib.geometry import points_in_box
 from .lib.groups import connected_groups
@@ -509,7 +509,7 @@ def align_from_anchors(
         if not any(in_graph[k] in fixed_names for k in group):
             fixed_names.add(in_graph[group[0]])
     free = [n for n in in_graph if n not in fixed_names]
-    deltas = graph4.solve(constraints, free) if constraints else {}
+    deltas = graph4.solve_4dof(constraints, free) if constraints else {}
 
     poses_out = {k: ScanPose(**vars(v)) for k, v in start.items()}
     rows: dict[str, AlignRow] = {}

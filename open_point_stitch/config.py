@@ -159,10 +159,10 @@ class PipelineConfig:
 
     # Detector voting. Only acts where both scans have ScanFeatures.
     detector_vote_enabled: bool = True
-    # colour.py's family classifier; separate from find_surfaces._rgb_to_hsv's floor.
+    # score.py's colour family classifier; separate from find_surfaces._rgb_to_hsv's floor.
     colour_saturation_floor: float = 0.12
     colour_hue_tolerance_deg: float = 35.0   # how close two hues must be to "agree"
-    # Six colour families with centres 60 degrees apart around the hue wheel. colour.hue_family picks the
+    # Six colour families with centres 60 degrees apart around the hue wheel. score.hue_family picks the
     # nearest centre, so the wrap at 0/360 needs no special case.
     colour_family_edges: tuple = (
         ("red", 0.0), ("orange", 60.0), ("yellow", 120.0),
@@ -247,7 +247,7 @@ class PipelineConfig:
     # Run the expensive stages through Open3D's tensor API (the CUDA-capable path). Off by default: its results
     # differ slightly from the legacy path.
     use_gpu: bool = False
-    # The CUDA pipeline in align_pair_cuda.py, for unseeded runs only.
+    # The CUDA pipeline in align_gpu.py, for unseeded runs only.
     use_gpu_pipeline: bool = False
     # Scan pairs processed at once. Plane fitting always runs single-threaded (limits.single_threaded) because
     # Open3D's RANSAC races across threads; RANSAC and ICP parallelise across workers.

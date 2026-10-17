@@ -8,7 +8,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from open_point_stitch import explain_moves as em  # noqa: E402
+from open_point_stitch import explain as em  # noqa: E402
 
 
 def wall(x0: float, n: int = 20000, seed: int = 0) -> np.ndarray:

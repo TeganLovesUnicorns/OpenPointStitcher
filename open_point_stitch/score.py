@@ -1,22 +1,22 @@
-"""Scoring candidate alignments. Candidates are ranked against each other with hard physical gates, not tested
-one by one against a fixed threshold."""
-
+"""Scoring candidate alignments. Candidates are ranked against each other with hard physical gates, not tested one
+by one against a fixed threshold. Also colour as a tolerant second opinion, and the trained judge for "Run from my
+alignment" from a rough start."""
 from __future__ import annotations
 
+import json
 import logging
+import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Iterable, Optional
 
 import numpy as np
 import open3d as o3d
 
-from . import colour
 from .config import PipelineConfig
 from .lib.geometry import fold_between
 from .lib.poses import tilt_of
 
 log = logging.getLogger(__name__)
-
 
 @dataclass
 class Verdict:
@@ -167,7 +167,7 @@ def plane_colour_agreement(
         offset = abs(float((c - best.centroid) @ best.normal))
         plane_num += w * 0.5 * (angle_score + _closeness(offset, cfg.vote_position_scale_m))
         plane_den += w
-        colour_num += w * colour.hue_agreement(s.hue, s.saturation, best.hue, best.saturation, cfg)
+        colour_num += w * hue_agreement(s.hue, s.saturation, best.hue, best.saturation, cfg)
         colour_den += w
     plane_agreement = (plane_num / plane_den) if plane_den > 0 else 0.0
     colour_agreement = (colour_num / colour_den) if colour_den > 0 else 0.0
@@ -210,7 +210,7 @@ def corner_agreement(
         # the whole score. Without this the vote was blind to translation.
         angle_num += w * _closeness(best_d, cfg.vote_position_scale_m)
         angle_den += w
-        colour_num += w * colour.hue_agreement(c.hue, c.saturation, best.hue, best.saturation, cfg)
+        colour_num += w * hue_agreement(c.hue, c.saturation, best.hue, best.saturation, cfg)
         colour_den += w
     agreement = (angle_num / angle_den) if angle_den > 0 else 0.0
     colour_score = (colour_num / colour_den) if colour_den > 0 else 0.0
@@ -264,7 +264,7 @@ def edge_agreement(
         w = e.cohesion * best.cohesion * min(e.length_m, best.length_m)
         num += w * best_score
         den += w
-        colour_num += w * colour.hue_agreement(e.hue, e.saturation,
+        colour_num += w * hue_agreement(e.hue, e.saturation,
                                                best.hue, best.saturation, cfg)
         colour_den += w
     agreement = (num / den) if den > 0 else 0.0
@@ -452,3 +452,111 @@ def confidence(ranked: list[Verdict]) -> tuple[str, str]:
                             f"next one, worth eyeballing")
     return "ambiguous", (f"the top two are within {margin*100:.0f}% of each other, "
                          f"so this pair is a guess. Use your rough placement.")
+
+
+# -------------------------------------------------------------------------------------------------------------------
+# Colour as a tolerant second opinion: hue families and local colour composition.
+# -------------------------------------------------------------------------------------------------------------------
+
+def hue_family(hue_deg: float, saturation: float, cfg) -> str:
+    """Nearest named hue family, or "neutral" below `cfg.colour_saturation_floor` (C2).
+    Nearest-centre over `cfg.colour_family_edges`, so no special case at the 0/360 wrap."""
+    if np.isnan(hue_deg) or saturation < cfg.colour_saturation_floor:
+        return "neutral"
+    h = hue_deg % 360.0
+    best_name, best_d = "", 361.0
+    for name, centre in cfg.colour_family_edges:
+        d = abs(h - centre) % 360.0
+        d = min(d, 360.0 - d)
+        if d < best_d:
+            best_name, best_d = name, d
+    return best_name
+
+
+def composition(
+    families: Iterable[str], weights: Iterable[float],
+) -> dict[str, float]:
+    """Colour signature (C4): weighted proportion of each family; {} for no input."""
+    totals: dict[str, float] = {}
+    total_w = 0.0
+    for fam, w in zip(families, weights):
+        w = float(w)
+        if w <= 0:
+            continue
+        totals[fam] = totals.get(fam, 0.0) + w
+        total_w += w
+    if total_w <= 0:
+        return {}
+    return {fam: w / total_w for fam, w in totals.items()}
+
+
+def composition_similarity(a: dict[str, float], b: dict[str, float]) -> float:
+    """0 to 1 histogram intersection of two compositions. Two empty ones agree (1.0)."""
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    keys = set(a) | set(b)
+    return float(sum(min(a.get(k, 0.0), b.get(k, 0.0)) for k in keys))
+
+
+def hue_agreement(hue_a: float, sat_a: float, hue_b: float, sat_b: float, cfg) -> float:
+    """0-1 agreement of two hues: neutral+neutral 1, neutral+coloured 0, else a circular
+    tolerance (`colour_hue_tolerance_deg`), never a family-boundary cliff."""
+    fam_a = hue_family(hue_a, sat_a, cfg)
+    fam_b = hue_family(hue_b, sat_b, cfg)
+    if fam_a == "neutral" and fam_b == "neutral":
+        return 1.0
+    if fam_a == "neutral" or fam_b == "neutral":
+        return 0.0
+    d = abs(hue_a - hue_b) % 360.0
+    d = min(d, 360.0 - d)
+    return float(max(0.0, 1.0 - d / cfg.colour_hue_tolerance_deg))
+
+
+# -------------------------------------------------------------------------------------------------------------------
+# The trained judge for "Run from my alignment" from a rough start: one list of clues per candidate, shared by
+# training and the run, and the model's probability that a candidate is right.
+# -------------------------------------------------------------------------------------------------------------------
+
+FEATURES = ["surface_fit", "fitness", "rmse", "normal_agree", "n_matched", "tilt_deg", "plane_agreement",
+            "colour_agreement", "n_planes_considered", "corner_agreement", "n_corners_considered", "edge_agreement",
+            "n_edges_considered", "opening_agreement", "n_openings_considered", "landmark_agreement",
+            "n_landmarks_considered", "vote_score", "detector_score",
+            "move_m", "move_deg", "is_proposer", "proposer_agree", "fit_gain"]
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed_judge.json")
+_MODEL: Optional[dict] = None
+
+
+def clues(values: dict) -> np.ndarray:
+    """FEATURES in order from a dict; a missing, empty or non-finite clue reads as 0, as the answer key writes it."""
+    out = []
+    for f in FEATURES:
+        v = values.get(f, 0.0)
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            v = 0.0
+        out.append(v if np.isfinite(v) else 0.0)
+    return np.array(out)
+
+
+def predict(model: dict, x: np.ndarray) -> np.ndarray:
+    """Probability each row is right: boosted stumps or a logistic fit, whichever `model` holds."""
+    x = np.atleast_2d(x)
+    if "stumps" in model:
+        f = sum(a * np.where(x[:, j] > t, s, -s) for j, t, s, a in model["stumps"])
+        return 1 / (1 + np.exp(-2 * f))
+    z = (x - np.asarray(model["mean"])) / np.asarray(model["std"])
+    return 1 / (1 + np.exp(-(z @ np.asarray(model["w"]) + model["b"])))
+
+
+def load_model(path: str = MODEL_PATH) -> dict:
+    global _MODEL
+    if _MODEL is None:
+        with open(path) as fh:
+            model = json.load(fh)
+        if list(model["features"]) != FEATURES:
+            raise ValueError("seed judge was trained on a different list of clues than this code computes")
+        _MODEL = model
+    return _MODEL

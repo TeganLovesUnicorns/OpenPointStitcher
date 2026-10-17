@@ -8,7 +8,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from open_point_stitch import measure_noise as mn  # noqa: E402
+from open_point_stitch import point_trust as mn  # noqa: E402
 
 
 def room(noise_m: float, seed: int = 0) -> np.ndarray:

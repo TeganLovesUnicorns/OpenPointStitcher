@@ -10,8 +10,7 @@ import numpy as np
 from .lib import geometry
 from .lib.files import write_drawing
 from .lib.groups import connected_groups
-from .landmark_boxes import label_points
-from .placement import Placement
+from .placement import Placement, label_points
 
 CELL_M = 0.05             # plan grid the pieces of one surface are joined on
 SAME_PLANE_M = 0.05       # pieces from different scans this close in height where they overlap are one surface
@@ -259,7 +258,7 @@ def _ascii(text: str) -> str:
 
 def dxf_text(surfaces: list[Surface], note: str = "", landmarks: list | None = None) -> str:
     """The DXF as text: each surface a closed 3D polyline on its plane, on a layer by kind, with its label; each named
-    landmark (landmark_boxes.LandmarkBox) the bottom and top of its box on LANDMARKS, named once."""
+    landmark (placement.LandmarkBox) the bottom and top of its box on LANDMARKS, named once."""
     out: list[str] = []
 
     def add(code: int, value) -> None:
