@@ -1,13 +1,17 @@
 """Projects. A project is a folder: scans-raw/ holds copies of imported .pts files (the source is never written
-to) and placement.json is the project file."""
+to) and placement.json is the project file. Also its saved placement versions (which a tidy keeps, and the tidy
+itself) and the hand-move log."""
 from __future__ import annotations
 
+import dataclasses
+import datetime
 import glob
 import json
 import os
 import re
 import shutil
 import time
+from typing import Callable, Optional
 
 from open_point_stitch.lib.files import write_json_atomic
 from open_point_stitch.placement import SCHEMA
@@ -261,4 +265,250 @@ def list_import_source(source_dir: str) -> list[dict]:
         except (OSError, ValueError):
             pass
         out.append({"name": name, "points": points})
+    return out
+
+
+# -------------------------------------------------------------------------------------------------------------------
+# Which placement backups a cleaner would remove. Pure decision logic with no filesystem access, so it can be
+# dry-run, tested and reused by both the automatic and the on-demand tidy.
+#
+# Rule: always keep the newest backup and anything pinned. Otherwise keep every backup from the last hour, then the
+# newest per hour for a day, then the newest per day after that.
+# -------------------------------------------------------------------------------------------------------------------
+
+@dataclasses.dataclass
+class BackupInfo:
+    id: str
+    at: datetime.datetime  # backup timestamp, timezone-aware (UTC)
+    size: int
+    pinned: bool = False
+
+
+def backups_to_remove(
+    backups: list[BackupInfo],
+    now: datetime.datetime,
+    recent_hours: float = 1.0,
+    hourly_days: float = 1.0,
+) -> list[BackupInfo]:
+    """Every backup the retention rule would delete, oldest first. Never
+    includes the single newest backup or anything pinned."""
+    if not backups:
+        return []
+    ordered = sorted(backups, key=lambda b: b.at, reverse=True)
+    newest_id = ordered[0].id
+    recent_cutoff = now - datetime.timedelta(hours=recent_hours)
+    hourly_cutoff = now - datetime.timedelta(days=hourly_days)
+
+    kept_hour_buckets: set[tuple] = set()
+    kept_day_buckets: set[tuple] = set()
+    remove = []
+    for b in ordered:
+        if b.id == newest_id or b.pinned:
+            continue
+        if b.at >= recent_cutoff:
+            continue  # inside the always-keep window
+        if b.at >= hourly_cutoff:
+            bucket = (b.at.year, b.at.month, b.at.day, b.at.hour)
+            if bucket in kept_hour_buckets:
+                remove.append(b)
+            else:
+                kept_hour_buckets.add(bucket)
+            continue
+        bucket = (b.at.year, b.at.month, b.at.day)
+        if bucket in kept_day_buckets:
+            remove.append(b)
+        else:
+            kept_day_buckets.add(bucket)
+    remove.sort(key=lambda b: b.at)
+    return remove
+
+
+def dry_run_summary(backups: list[BackupInfo], now: datetime.datetime,
+                    recent_hours: float = 1.0, hourly_days: float = 1.0) -> dict:
+    """What a real run would do, without touching anything - the preview the
+    UI shows before Delete is ever pressed."""
+    remove = backups_to_remove(backups, now, recent_hours, hourly_days)
+    return {
+        "n_total": len(backups),
+        "n_remove": len(remove),
+        "n_keep": len(backups) - len(remove),
+        "bytes_freed": sum(b.size for b in remove),
+        "remove_ids": [b.id for b in remove],
+    }
+
+
+# -------------------------------------------------------------------------------------------------------------------
+# Tidy a project's saved placement versions. backups_to_remove decides; this reads pins and references and
+# removes files. Never removes the newest, a pinned one, or one a report, job, export or the golden folder names.
+# -------------------------------------------------------------------------------------------------------------------
+
+PINS_FILE = "pins.json"
+_NAME_IN_TEXT = re.compile(r"placement\.backup-\d{8}T\d{6}\.\d{3}Z(?:-\d+)?\.json")
+_MAX_TEXT_BYTES = 5 * 1024 * 1024   # reference scan reads JSON/text files up to this size
+
+
+def default_golden_dir() -> str:
+    """OPENPOINT_GOLDEN_DIR if set, else the repo's own golden/ next to the package."""
+    return os.environ.get("OPENPOINT_GOLDEN_DIR") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "golden")
+
+
+def read_pins(pdir: str) -> set[str]:
+    try:
+        with open(os.path.join(backups_dir(pdir), PINS_FILE)) as fh:
+            return {p for p in json.load(fh).get("pinned", []) if BACKUP_RE.match(p)}
+    except (OSError, ValueError, AttributeError):
+        return set()
+
+
+def set_pinned(pdir: str, backup_id: str, pinned: bool) -> set[str]:
+    """Pin or unpin one saved version; returns every pinned id."""
+    pins = read_pins(pdir)
+    (pins.add if pinned else pins.discard)(backup_id)
+    write_json_atomic(os.path.join(backups_dir(pdir), PINS_FILE), {"pinned": sorted(pins)}, indent=1)
+    return pins
+
+
+def _names_in_tree(root: str) -> set[str]:
+    """Backup names under `root`: file names, and names written inside small JSON/text files."""
+    found: set[str] = set()
+    if not os.path.isdir(root):
+        return found
+    for folder, _dirs, files in os.walk(root):
+        for name in files:
+            if BACKUP_RE.match(name):
+                found.add(name)
+                continue
+            path = os.path.join(folder, name)
+            if not name.endswith((".json", ".txt", ".md")) or os.path.getsize(path) > _MAX_TEXT_BYTES:
+                continue
+            try:
+                with open(path, encoding="utf-8", errors="ignore") as fh:
+                    found.update(_NAME_IN_TEXT.findall(fh.read()))
+            except OSError:
+                continue
+    return found
+
+
+def referenced_ids(pdir: str, golden_dir: Optional[str] = None) -> set[str]:
+    """Every saved version a report, job, export or the golden folder names."""
+    found: set[str] = set()
+    for sub in (reports_dir(pdir), exports_dir(pdir), os.path.join(pdir, "jobs")):
+        found |= _names_in_tree(sub)
+    return found | _names_in_tree(golden_dir if golden_dir is not None else default_golden_dir())
+
+
+def _parse_at(at: str) -> datetime.datetime:
+    return datetime.datetime.strptime(at, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=datetime.timezone.utc)
+
+
+def plan_tidy(pdir: str, listing: list[dict], now: datetime.datetime, keep_all_hours: float, hourly_days: float,
+         golden_dir: Optional[str] = None) -> dict:
+    """What a tidy would remove, without touching anything. `listing` is the server's backup list."""
+    pins = read_pins(pdir)
+    infos = [BackupInfo(id=b["id"], at=_parse_at(b["at"]), size=int(b["size"]), pinned=b["id"] in pins)
+             for b in listing]
+    summary = dry_run_summary(infos, now, keep_all_hours, hourly_days)
+    if summary["n_remove"]:                        # only pay for the reference scan when it matters
+        refs = referenced_ids(pdir, golden_dir)
+        for b in infos:
+            b.pinned = b.pinned or b.id in refs
+        summary = dry_run_summary(infos, now, keep_all_hours, hourly_days)
+        summary["n_named_elsewhere"] = len(refs & {b.id for b in infos})
+    summary.setdefault("n_named_elsewhere", 0)
+    summary["n_pinned"] = len(pins & {b.id for b in infos})
+    return summary
+
+
+def tidy_backups(pdir: str, listing: list[dict], resolve: Callable[[str], Optional[str]], now: datetime.datetime,
+         keep_all_hours: float, hourly_days: float, golden_dir: Optional[str] = None) -> dict:
+    """Remove what `plan_tidy` says. `resolve` maps an id to its file inside this project, or None."""
+    summary = plan_tidy(pdir, listing, now, keep_all_hours, hourly_days, golden_dir)
+    removed, freed = [], 0
+    project_root = os.path.realpath(pdir)
+    for backup_id in summary["remove_ids"]:
+        if not BACKUP_RE.match(backup_id):   # only ever a saved version: never the hand log or anything else
+            continue
+        path = resolve(backup_id)
+        if not path or os.path.commonpath([os.path.realpath(path), project_root]) != project_root:
+            continue
+        try:
+            size = os.path.getsize(path)
+            os.remove(path)
+        except OSError:
+            continue
+        removed.append(backup_id)
+        freed += size
+    summary.update(removed_ids=removed, n_removed=len(removed), bytes_removed=freed)
+    return summary
+
+
+# -------------------------------------------------------------------------------------------------------------------
+# The hand-move log: one line per finished hand move, appended to a plain text file in the project folder.
+# Local only.
+# -------------------------------------------------------------------------------------------------------------------
+
+HAND_MOVES_FILE = "hand-moves.jsonl"
+HAND_MOVES_OLD_FILE = "hand-moves.old.jsonl"  # the previous file, kept once when the current one is full
+HAND_MOVES_MAX_BYTES = 2_000_000       # about 5,000 moves; then it rolls over and the oldest file is replaced
+HAND_MOVE_POSE_KEYS = ("x", "y", "z", "yaw", "pitch", "roll")
+HAND_MOVE_KINDS = ("nudge", "undo", "redo", "revert")
+HAND_MOVE_HOWS = ("drag", "arrow keys", "typed number", "nudge button", "reset to as-imported",
+                  "revert to placement", "undo", "redo", "other")
+HAND_MOVE_SOURCES = ("hand", "automatic run", "as imported", "unknown")
+
+
+def _hand_pose(p) -> Optional[dict]:
+    if not isinstance(p, dict) or not all(isinstance(p.get(k), (int, float)) for k in HAND_MOVE_POSE_KEYS):
+        return None
+    return {k: round(float(p[k]), 5) for k in HAND_MOVE_POSE_KEYS}
+
+
+def clean_hand_move(move: dict) -> Optional[dict]:
+    """One line as it will be written, or None when it is not a valid move. Unknown fields are dropped."""
+    if not isinstance(move, dict) or not isinstance(move.get("scan"), str) or not move["scan"]:
+        return None
+    before, after = _hand_pose(move.get("before")), _hand_pose(move.get("after"))
+    if before is None or after is None or before == after:
+        return None
+    src = move.get("before_source") if isinstance(move.get("before_source"), dict) else {}
+    return {
+        "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "scan": move["scan"][:200],
+        "kind": move.get("kind") if move.get("kind") in HAND_MOVE_KINDS else "nudge",
+        "how": move.get("how") if move.get("how") in HAND_MOVE_HOWS else "other",
+        "view": str(move.get("view", ""))[:40],
+        "before": before, "after": after,
+        "before_source": {"kind": src.get("kind") if src.get("kind") in HAND_MOVE_SOURCES else "unknown",
+                          "run": str(src.get("run", ""))[:80]},
+    }
+
+
+def append_hand_moves(pdir: str, moves: list) -> int:
+    """Append every valid move as one line; roll the file over first when it is full. Returns lines written."""
+    lines = [m for m in (clean_hand_move(x) for x in (moves if isinstance(moves, list) else [])) if m is not None]
+    if not lines:
+        return 0
+    path = os.path.join(pdir, HAND_MOVES_FILE)
+    if os.path.exists(path) and os.path.getsize(path) >= HAND_MOVES_MAX_BYTES:
+        os.replace(path, os.path.join(pdir, HAND_MOVES_OLD_FILE))
+    with open(path, "a", encoding="utf-8") as fh:
+        for line in lines:
+            fh.write(json.dumps(line) + "\n")
+    return len(lines)
+
+
+def read_hand_moves(pdir: str) -> list[dict]:
+    """Every line, oldest first (the rolled-over file, then the current one); unreadable lines are skipped."""
+    out = []
+    for name in (HAND_MOVES_OLD_FILE, HAND_MOVES_FILE):
+        path = os.path.join(pdir, name)
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            for raw in fh:
+                try:
+                    out.append(json.loads(raw))
+                except ValueError:
+                    continue
     return out

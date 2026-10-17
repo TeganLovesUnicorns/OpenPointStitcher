@@ -60,14 +60,12 @@ from open_point_stitch.prepare import preprocess_all_offloaded
 from open_point_stitch.pts_file import load_folder
 from open_point_stitch import align_gravity, limits
 from open_point_stitch import project as project_mod
-from open_point_stitch import backup_cleaner
 from open_point_stitch import find_floors_ceilings
 from open_point_stitch import export_3d, find_walls, landmark_boxes
 from open_point_stitch import explain_moves
 from open_point_stitch import wall_checks
 from open_point_stitch import job_process
 from open_point_stitch import measure_noise
-from open_point_stitch import hand_moves
 import build_bench  # tools/build_bench.py: the one place a preview payload is built
 
 log = logging.getLogger(__name__)
@@ -149,7 +147,7 @@ def _backup_folders(out_dir: str) -> list[str]:
 
 def _list_backups(out_dir: str) -> list[dict]:
     """Every backup for this project, newest first. The id is the file name; its stamp is when that save happened."""
-    rows, seen, pins = [], set(), backup_cleaner.read_pins(out_dir)
+    rows, seen, pins = [], set(), project_mod.read_pins(out_dir)
     for folder in _backup_folders(out_dir):
         if not os.path.isdir(folder):
             continue
@@ -192,8 +190,8 @@ def _tidy_backups(out_dir: str, dry_run: bool, settings: Optional[dict] = None) 
     keep_all, hourly = _tidy_rules(settings)
     now = datetime.datetime.now(datetime.timezone.utc)
     listing = _list_backups(out_dir)
-    got = (backup_cleaner.plan(out_dir, listing, now, keep_all, hourly) if dry_run else
-           backup_cleaner.tidy(out_dir, listing, lambda i: _backup_file_path(out_dir, i), now, keep_all, hourly))
+    got = (project_mod.plan_tidy(out_dir, listing, now, keep_all, hourly) if dry_run else
+           project_mod.tidy_backups(out_dir, listing, lambda i: _backup_file_path(out_dir, i), now, keep_all, hourly))
     return dict(got, keep_all_hours=keep_all, hourly_days=hourly)
 
 
@@ -2293,7 +2291,7 @@ def make_handler(session: Session):
                     if _backup_file_path(app.out_dir, backup_id) is None:
                         self._json(404, {"error": f"no such saved version {backup_id!r}"})
                         return
-                    pins = backup_cleaner.set_pinned(app.out_dir, backup_id, bool(self._body().get("pinned", True)))
+                    pins = project_mod.set_pinned(app.out_dir, backup_id, bool(self._body().get("pinned", True)))
                     self._json(200, {"pinned": backup_id in pins})
                 elif path == "/api/placement/backups-tidy":
                     app = self._open_app()
@@ -2333,8 +2331,8 @@ def make_handler(session: Session):
                     app = self._open_app()
                     if app is None:
                         return
-                    written = hand_moves.append(app.out_dir, self._body().get("moves", []))
-                    self._json(200, {"written": written, "file": hand_moves.FILE_NAME})
+                    written = project_mod.append_hand_moves(app.out_dir, self._body().get("moves", []))
+                    self._json(200, {"written": written, "file": project_mod.HAND_MOVES_FILE})
                 elif path == "/api/settings":
                     app = self._open_app()
                     if app is None:
