@@ -92,15 +92,5 @@ def test_merging_one_wall_found_twice_keeps_the_stronger_plane_exactly():
 
 
 if __name__ == "__main__":
-    tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"PASS {t.__name__}")
-        except AssertionError as exc:
-            failed += 1
-            print(f"FAIL {t.__name__}: {exc}")
-    if failed:
-        raise SystemExit(f"{failed} of {len(tests)} test(s) failed")
-    print(f"{len(tests)} of {len(tests)} passed")
+    from support import run_tests
+    raise SystemExit(run_tests(globals()))

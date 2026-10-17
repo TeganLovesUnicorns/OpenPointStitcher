@@ -246,11 +246,5 @@ def test_feature_pair_score_zero_with_no_surfaces_either_side():
 
 
 if __name__ == "__main__":
-    failures = 0
-    for name, fn in sorted(list(globals().items())):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn(); print(f"PASS {name}")
-            except Exception as exc:
-                failures += 1; print(f"FAIL {name}: {exc}")
-    raise SystemExit(1 if failures else 0)
+    from support import run_tests
+    raise SystemExit(run_tests(globals()))

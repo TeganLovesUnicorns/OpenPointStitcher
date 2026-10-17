@@ -7,6 +7,10 @@ from __future__ import annotations
 import json
 import math
 
+import numpy as np
+
+from .lib.poses import fit_yaw_shift_2d, rot2, yaw_gap_deg, yaw_matrix2
+
 
 def load_scan_poses(path: str) -> dict[str, dict]:
     """Every scan's entry from a placement file (or backup), keyed by name."""
@@ -20,39 +24,20 @@ def _pose(s: dict) -> tuple[float, float, float, float]:
             float(s.get("z_m", 0.0)), float(s.get("yaw_deg", 0.0)))
 
 
-def _wrap_deg(a: float) -> float:
-    return (a + 180.0) % 360.0 - 180.0
-
-
-def _weighted_fit(src, dst, w):
-    k = sum(w)
-    sx, sy = sum(wi * p[0] for wi, p in zip(w, src)) / k, sum(wi * p[1] for wi, p in zip(w, src)) / k
-    tx, ty = sum(wi * p[0] for wi, p in zip(w, dst)) / k, sum(wi * p[1] for wi, p in zip(w, dst)) / k
-    a = b = 0.0
-    for wi, (x1, y1, _, _), (x2, y2, _, _) in zip(w, src, dst):
-        x1, y1, x2, y2 = x1 - sx, y1 - sy, x2 - tx, y2 - ty
-        a += wi * (x1 * x2 + y1 * y2)
-        b += wi * (x1 * y2 - y1 * x2)
-    return math.atan2(b, a), (sx, sy), (tx, ty)
-
-
 def whole_layout_fit(layout: dict[str, dict], target: dict[str, dict], names: list[str],
                      iterations: int = 30, floor_m: float = 0.02) -> dict:
     """Best turn (about the vertical), sideways shift and lift moving layout's scan origins onto target's. Robust:
     scans that disagree most get less say each round, so one badly placed scan does not drag the fit."""
-    src = [_pose(layout[n]) for n in names]
-    dst = [_pose(target[n]) for n in names]
-    w = [1.0] * len(names)
+    src = np.array([_pose(layout[n]) for n in names])
+    dst = np.array([_pose(target[n]) for n in names])
+    w = np.ones(len(names))
     for _ in range(iterations):
-        th, sc, dc = _weighted_fit(src, dst, w)
-        c, s = math.cos(th), math.sin(th)
-        w = [1.0 / max(floor_m, math.hypot(c * (p[0] - sc[0]) - s * (p[1] - sc[1]) + dc[0] - q[0],
-                                          s * (p[0] - sc[0]) + c * (p[1] - sc[1]) + dc[1] - q[1]))
-             for p, q in zip(src, dst)]
+        th, shift = fit_yaw_shift_2d(src, dst, w)
+        w = 1.0 / np.maximum(floor_m, np.linalg.norm(src[:, :2] @ rot2(th).T + shift - dst[:, :2], axis=1))
     lifts = sorted(q[2] - p[2] for p, q in zip(src, dst))
     mid = len(lifts) // 2
     lift = lifts[mid] if len(lifts) % 2 else (lifts[mid - 1] + lifts[mid]) / 2
-    return {"yaw_deg": math.degrees(th), "src_centre": sc, "dst_centre": dc, "lift_m": lift}
+    return {"yaw_deg": math.degrees(th), "shift": shift, "lift_m": lift}
 
 
 def per_scan_error(layout: dict[str, dict], target: dict[str, dict],
@@ -67,14 +52,11 @@ def per_scan_error(layout: dict[str, dict], target: dict[str, dict],
         x, y, z, yaw = _pose(layout[n])
         gx, gy, gz, gyaw = _pose(target[n])
         if fit is not None:
-            th = math.radians(fit["yaw_deg"])
-            dx, dy = x - fit["src_centre"][0], y - fit["src_centre"][1]
-            x = math.cos(th) * dx - math.sin(th) * dy + fit["dst_centre"][0]
-            y = math.sin(th) * dx + math.cos(th) * dy + fit["dst_centre"][1]
+            x, y = yaw_matrix2(fit["yaw_deg"]) @ [x, y] + fit["shift"]
             z += fit["lift_m"]
             yaw += fit["yaw_deg"]
         rows.append({"scan": n, "xy_m": math.hypot(x - gx, y - gy), "z_m": abs(z - gz),
-                     "yaw_deg": abs(_wrap_deg(yaw - gyaw))})
+                     "yaw_deg": yaw_gap_deg(yaw, gyaw)})
     return rows
 
 

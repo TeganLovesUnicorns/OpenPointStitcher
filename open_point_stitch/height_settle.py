@@ -7,7 +7,8 @@ from typing import Iterable, Optional
 
 import numpy as np
 
-from .align_anchors import ScanPose, flat_height_gap, world_cloud_points_as_drawn
+from .align_anchors import flat_height_gap
+from .lib.poses import ScanPose, world_cloud_points_as_drawn
 from .find_floors_ceilings import on_pieces
 
 MIN_PAIRS = 200         # floor/ceiling point pairs two scans must share before their gap counts

@@ -3,7 +3,6 @@ written as a DXF to draw over. Units are metres."""
 from __future__ import annotations
 
 import logging
-import os
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -13,7 +12,9 @@ import numpy as np
 
 from .exclusions import filter_scan
 from .landmark_boxes import label_points
-from .placement import Exclusion, Placement, tilt_matrix3
+from .lib.files import write_drawing
+from .lib.poses import tilt_matrix3
+from .placement import Exclusion, Placement
 from .pts_file import Scan
 
 log = logging.getLogger(__name__)
@@ -220,15 +221,7 @@ def preview_png(cut: PlanCut, max_side: int = 2400) -> bytes:
 
 def write_plan(cut: PlanCut, folder: str, note: str = "", stem: str = "plan_view") -> dict:
     """Write <stem>.dxf and <stem>.png into `folder`; returns what was written."""
-    os.makedirs(folder, exist_ok=True)
-    dxf_path = os.path.join(folder, stem + ".dxf")
-    with open(dxf_path, "w", encoding="ascii", newline="\r\n") as fh:
-        fh.write(dxf_text(cut, note))
-    png_path = os.path.join(folder, stem + ".png")
-    png = preview_png(cut)
-    if png:
-        with open(png_path, "wb") as fh:
-            fh.write(png)
-    return {"dxf_path": dxf_path, "png_path": png_path if png else None, "outlines": len(cut.polylines),
+    dxf_path, png_path = write_drawing(folder, stem, dxf_text(cut, note), preview_png(cut))
+    return {"dxf_path": dxf_path, "png_path": png_path, "outlines": len(cut.polylines),
             "footprints": len(cut.footprints), "points_in_cut": cut.points_in_cut, "scans_used": cut.scans_used,
             "z_lo": round(cut.z_lo, 3), "z_hi": round(cut.z_hi, 3), "cell_m": round(cut.cell_m, 4)}

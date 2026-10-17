@@ -8,7 +8,7 @@ from itertools import combinations
 
 import numpy as np
 
-from . import geometry
+from .lib import geometry
 from .find_surfaces import ScanFeatures, Surface
 
 

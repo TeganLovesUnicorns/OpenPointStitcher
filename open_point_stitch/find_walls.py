@@ -10,7 +10,9 @@ from itertools import permutations
 import numpy as np
 import open3d as o3d
 
-from .align_gravity import estimate_level, tilt_of
+from .align_gravity import estimate_level
+from .lib.geometry import fold_between
+from .lib.poses import rot2, tilt_of
 from .find_true_walls import find_true_wall
 from .limits import single_threaded
 
@@ -237,7 +239,7 @@ def merge_duplicate_walls(walls: list[Wall],
     for w in sorted(walls, key=lambda x: -x.support):
         hit = None
         for m in merged:
-            ang = abs(np.degrees(np.arccos(np.clip(abs(float(w.normal @ m.normal)), -1, 1))))
+            ang = fold_between(w.normal, m.normal)
             if ang > angle_tol_deg:
                 continue
             # Compare the candidate's centroid against the kept wall's plane. Raw offsets are unreliable far from
@@ -255,11 +257,6 @@ def merge_duplicate_walls(walls: list[Wall],
         hit.height = max(hit.height, w.height)
         hit.support = hit.support + w.support
     return merged
-
-
-def _yaw_matrix(theta: float) -> np.ndarray:
-    c, s = np.cos(theta), np.sin(theta)
-    return np.array([[c, -s], [s, c]])
 
 
 def solve_from_wall_pair(
@@ -288,7 +285,7 @@ def solve_from_wall_pair(
             nb, ob = tgt_b.normal * fb, tgt_b.offset * fb
 
             theta = signed_angle(src_a.normal, na)
-            rot = _yaw_matrix(theta)
+            rot = rot2(theta)
             # Consistency: the second wall must land on its counterpart too.
             err = abs(np.degrees(signed_angle(rot @ src_b.normal, nb)))
             err = min(err, 360.0 - err)
@@ -310,7 +307,7 @@ def solve_from_wall_pair(
 
     _, theta, t_xy = best
     m = np.eye(4)
-    m[:2, :2] = _yaw_matrix(theta)
+    m[:2, :2] = rot2(theta)
     m[0, 3] = t_xy[0]
     m[1, 3] = t_xy[1]
     m[2, 3] = tgt_floor - src_floor

@@ -7,44 +7,15 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 import numpy as np
 
+from .lib.files import write_json_atomic
+from .lib.poses import tilt_matrix3
+
 log = logging.getLogger(__name__)
-
-
-def yaw_matrix2(deg: float) -> np.ndarray:
-    t = np.radians(deg)
-    c, s = np.cos(t), np.sin(t)
-    return np.array([[c, -s], [s, c]])
-
-
-def yaw_matrix3(deg: float) -> np.ndarray:
-    m = np.eye(3)
-    m[:2, :2] = yaw_matrix2(deg)
-    return m
-
-
-def pitch_matrix3(deg: float) -> np.ndarray:
-    """Rotation about Y: tips the scan front-to-back (tilts the X axis)."""
-    t = np.radians(deg)
-    c, s = np.cos(t), np.sin(t)
-    return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
-
-
-def roll_matrix3(deg: float) -> np.ndarray:
-    """Rotation about X: tips the scan side-to-side (tilts the Y axis)."""
-    t = np.radians(deg)
-    c, s = np.cos(t), np.sin(t)
-    return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
-
-
-def tilt_matrix3(pitch_deg: float, roll_deg: float, yaw_deg: float) -> np.ndarray:
-    """A scan's rotation as the bench draws it: yaw, then the hand-set roll, then pitch (world axes)."""
-    return pitch_matrix3(pitch_deg) @ roll_matrix3(roll_deg) @ yaw_matrix3(yaw_deg)
 
 
 @dataclass
@@ -62,6 +33,21 @@ class Placement:
     pitch_deg: float = 0.0
     roll_deg: float = 0.0
     locked: bool = False
+
+    @classmethod
+    def from_dict(cls, s: dict, strict: bool = False, prefix: str = "") -> "Placement":
+        """One scan's entry from a placement file. Missing tilt reads as zero (older files have none); missing yaw or
+        position reads as zero too unless strict, which raises KeyError instead. prefix="human_" reads the hand
+        placement saved beside the pose."""
+        pose = (lambda k: float(s[prefix + k])) if strict else (lambda k: float(s.get(prefix + k, 0.0)))
+        return cls(
+            name=s["name"],
+            level_rotation=np.array(s.get("level_rotation", np.eye(3).tolist()), dtype=float),
+            floor_z=float(s.get("floor_z_local_m", 0.0)),
+            yaw_deg=pose("yaw_deg"), tx=pose("x_m"), ty=pose("y_m"), tz=pose("z_m"),
+            pitch_deg=float(s.get(prefix + "pitch_deg", 0.0)), roll_deg=float(s.get(prefix + "roll_deg", 0.0)),
+            locked=bool(s.get("locked", False)),
+        )
 
     def matrix(self) -> np.ndarray:
         """4x4 taking this scan's RAW points into the shared world frame."""
@@ -113,9 +99,7 @@ def save_placements(path: str, placements: Iterable[Placement],
             for p in placements
         ],
     }
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with open(path, "w") as fh:
-        json.dump(payload, fh, indent=2)
+    write_json_atomic(path, payload, indent=2)
 
 
 @dataclass
@@ -239,22 +223,9 @@ def load_placements(path: str) -> LoadedPlacements:
     out = {}
     all_identity = True
     for s in raw.get("scans", []):
-        rot = np.array(s.get("level_rotation", np.eye(3).tolist()))
-        if not np.allclose(rot, np.eye(3)):
+        out[s["name"]] = Placement.from_dict(s)
+        if not np.allclose(out[s["name"]].level_rotation, np.eye(3)):
             all_identity = False
-        out[s["name"]] = Placement(
-            name=s["name"],
-            level_rotation=rot,
-            floor_z=float(s.get("floor_z_local_m", 0.0)),
-            yaw_deg=float(s.get("yaw_deg", 0.0)),
-            # older files have no tilt fields; load them at zero tilt
-            pitch_deg=float(s.get("pitch_deg", 0.0)),
-            roll_deg=float(s.get("roll_deg", 0.0)),
-            tx=float(s.get("x_m", 0.0)),
-            ty=float(s.get("y_m", 0.0)),
-            tz=float(s.get("z_m", 0.0)),
-            locked=bool(s.get("locked", False)),
-        )
 
     if out and all_identity:
         log.warning(

@@ -13,6 +13,7 @@ import open3d as o3d
 
 from .config import PipelineConfig
 from .align_pair import PairResult
+from .lib.groups import connected_groups
 
 log = logging.getLogger(__name__)
 
@@ -44,26 +45,6 @@ def _detector_weighted_information(info: np.ndarray, r: PairResult, cfg: Pipelin
     return info * multiplier
 
 
-def _connected_components(n: int, edges: list[tuple[int, int]]) -> list[list[int]]:
-    parent = list(range(n))
-
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    for a, b in edges:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
-
-    groups: dict[int, list[int]] = {}
-    for i in range(n):
-        groups.setdefault(find(i), []).append(i)
-    return sorted(groups.values(), key=lambda g: (-len(g), g[0]))
-
-
 def build_and_optimize(
     n_scans: int,
     results: list[PairResult],
@@ -81,7 +62,7 @@ def build_and_optimize(
         )
 
     edge_pairs = [(r.source, r.target) for r in accepted]
-    components = _connected_components(n_scans, edge_pairs)
+    components = sorted(connected_groups(n_scans, edge_pairs), key=lambda g: (-len(g), g[0]))
     connected = len(components) == 1
     if not connected:
         log.warning(

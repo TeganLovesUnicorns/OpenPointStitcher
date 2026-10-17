@@ -8,7 +8,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from open_point_stitch.placement import Placement, yaw_matrix3  # noqa: E402
+from open_point_stitch.placement import Placement  # noqa: E402
+from open_point_stitch.lib.poses import yaw_matrix3  # noqa: E402
 from open_point_stitch.server import (  # noqa: E402
     _decompose_pose, _yaw_and_translation_only, _layout_bound_check, _IdleStoppingPool,
 )
@@ -96,7 +97,7 @@ def test_deviation_heatmap_uses_the_saved_hand_tilt():
     import threading
     from types import SimpleNamespace
 
-    from open_point_stitch.placement import tilt_matrix3
+    from open_point_stitch.lib.poses import tilt_matrix3
     from open_point_stitch.server import _compute_deviation
 
     gx, gy = np.meshgrid(np.arange(-3.0, 3.01, 0.25), np.arange(-3.0, 3.01, 0.25))
@@ -131,7 +132,7 @@ def test_decompose_pose_is_the_inverse_of_the_matrix_with_a_floor_level():
 def test_a_dropped_tilt_keeps_the_scans_centre_not_its_origin():
     """The solve tipped a hand-tilted scan one more degree; only yaw and position are kept, so its centre, 10 m from
     its origin, must stay where the solve put it."""
-    from open_point_stitch.placement import tilt_matrix3
+    from open_point_stitch.lib.poses import tilt_matrix3
     from open_point_stitch.server import _centre_shift_for_dropped_tilt
     level = np.eye(3)
     hand = Placement(name="a", level_rotation=level, floor_z=-1.5, yaw_deg=40.0, tx=2.0, ty=1.0, tz=0.2,
@@ -207,11 +208,5 @@ def test_preview_workers_stop_when_idle_and_start_again_for_new_work():
 
 
 if __name__ == "__main__":
-    failures = 0
-    for name, fn in sorted(list(globals().items())):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn(); print(f"PASS {name}")
-            except Exception as exc:
-                failures += 1; print(f"FAIL {name}: {exc}")
-    raise SystemExit(1 if failures else 0)
+    from support import run_tests
+    raise SystemExit(run_tests(globals()))

@@ -2,13 +2,14 @@
 Where several scans saw the same surface it is drawn once, and the file records how far apart the scans had it."""
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
 
-from . import geometry
+from .lib import geometry
+from .lib.files import write_drawing
+from .lib.groups import connected_groups
 from .landmark_boxes import label_points
 from .placement import Placement
 
@@ -131,29 +132,19 @@ def _join_flat(surfaces: list[Surface]) -> list[Surface]:
         return []
     lo, size = _plan_grid(surfaces)
     rasters = [_raster(s, lo, size) for s in surfaces]
-    parent = list(range(len(surfaces)))
 
-    def root(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-    for i, a in enumerate(surfaces):
-        for j in range(i + 1, len(surfaces)):
-            b = surfaces[j]
-            if a.kind != b.kind or geometry.angle_between(a.normal, b.normal) > SAME_TILT_DEG:
-                continue
-            both = rasters[i] & rasters[j]
-            if not both.any():
-                continue
-            rc = np.argwhere(both)[:, ::-1] * CELL_M + lo
-            if np.median(np.abs(_z_on(a.normal, a.offset, rc) - _z_on(b.normal, b.offset, rc))) <= SAME_PLANE_M:
-                parent[root(j)] = root(i)
-    groups: dict[int, list[int]] = {}
-    for i in range(len(surfaces)):
-        groups.setdefault(root(i), []).append(i)
+    def same(i: int, j: int) -> bool:
+        a, b = surfaces[i], surfaces[j]
+        if a.kind != b.kind or geometry.angle_between(a.normal, b.normal) > SAME_TILT_DEG:
+            return False
+        both = rasters[i] & rasters[j]
+        if not both.any():
+            return False
+        rc = np.argwhere(both)[:, ::-1] * CELL_M + lo
+        return bool(np.median(np.abs(_z_on(a.normal, a.offset, rc) - _z_on(b.normal, b.offset, rc))) <= SAME_PLANE_M)
+
     out = []
-    for members in groups.values():
+    for members in connected_groups(len(surfaces), linked=same):
         ss = [surfaces[i] for i in members]
         cells = np.zeros_like(rasters[members[0]])
         for i in members:
@@ -347,18 +338,10 @@ def preview_png(surfaces: list[Surface], px_per_m: float = 40.0) -> bytes:
 def write_3d(surfaces: list[Surface], folder: str, note: str = "", stem: str = "surfaces_3d",
              landmarks: list | None = None) -> dict:
     """Write <stem>.dxf and a top-down <stem>.png into `folder`; returns what was written."""
-    os.makedirs(folder, exist_ok=True)
-    dxf_path = os.path.join(folder, stem + ".dxf")
-    with open(dxf_path, "w", encoding="ascii", newline="\r\n") as fh:
-        fh.write(dxf_text(surfaces, note, landmarks))
-    png_path = os.path.join(folder, stem + ".png")
-    png = preview_png(surfaces)
-    if png:
-        with open(png_path, "wb") as fh:
-            fh.write(png)
+    dxf_path, png_path = write_drawing(folder, stem, dxf_text(surfaces, note, landmarks), preview_png(surfaces))
     count = {k: sum(1 for s in surfaces if s.kind == k) for k in ("floor", "ceiling", "surface", "wall")}
     shared = [s.spread_m for s in surfaces if len(s.scans) > 1]
-    return {"dxf_path": dxf_path, "png_path": png_path if png else None, **{f"n_{k}": v for k, v in count.items()},
+    return {"dxf_path": dxf_path, "png_path": png_path, **{f"n_{k}": v for k, v in count.items()},
             "n_sloped": sum(1 for s in surfaces if s.kind == "ceiling" and s.sloped),
             "spread_median_cm": round(float(np.median(shared)) * 100, 1) if shared else None,
             "labels": [s.label for s in surfaces if s.kind != "wall"]}

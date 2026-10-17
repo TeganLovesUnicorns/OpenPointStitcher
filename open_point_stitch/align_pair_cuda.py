@@ -13,7 +13,7 @@ import open3d as o3d
 
 from .config import PipelineConfig
 from .align_gravity import coarse_candidates
-from .align_points import solve_yaw_translation
+from .lib.poses import solve_yaw_translation, yaw_transform
 from .prepare import Prepared
 from .score import Verdict, build_target_index, score_candidate_fast
 from .find_walls import wall_candidates
@@ -66,14 +66,6 @@ class CudaPairResult:
 # coarse: many hypotheses from on-device feature matching
 # ---------------------------------------------------------------------------
 
-def _yaw_transform(yaw_deg: float, t: np.ndarray) -> np.ndarray:
-    c, s = np.cos(np.radians(yaw_deg)), np.sin(np.radians(yaw_deg))
-    T = np.eye(4)
-    T[:3, :3] = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
-    T[:3, 3] = t
-    return T
-
-
 def _feature_hypotheses(src: DevicePrepared, tgt: DevicePrepared,
                         n_hypotheses: int, rng: np.random.Generator) -> list[np.ndarray]:
     """Sample n_hypotheses minimal (two-correspondence) 4 DOF hypotheses from on-device FPFH matches: the GPU
@@ -95,7 +87,7 @@ def _feature_hypotheses(src: DevicePrepared, tgt: DevicePrepared,
             yaw_deg, t = solve_yaw_translation(src_pts[s_idx], tgt_pts[t_idx])
         except ValueError:
             continue  # coincident picks - not a usable hypothesis, skip it
-        hyps.append(_yaw_transform(yaw_deg, t))
+        hyps.append(yaw_transform(yaw_deg, t))
     return hyps
 
 

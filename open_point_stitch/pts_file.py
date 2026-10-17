@@ -12,6 +12,8 @@ from typing import Optional
 import numpy as np
 import open3d as o3d
 
+from .lib.clouds import as_cloud
+
 log = logging.getLogger(__name__)
 
 # Intensity values written when the field is unpopulated.
@@ -38,11 +40,7 @@ class Scan:
         return self.colors is not None
 
     def to_o3d(self) -> o3d.geometry.PointCloud:
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(self.points)
-        if self.colors is not None:
-            pcd.colors = o3d.utility.Vector3dVector(self.colors)
-        return pcd
+        return as_cloud(self.points, self.colors)
 
     def bounds(self) -> tuple[np.ndarray, np.ndarray]:
         return self.points.min(axis=0), self.points.max(axis=0)

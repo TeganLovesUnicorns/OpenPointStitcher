@@ -2,7 +2,7 @@
 
 Each link is matched on the full-resolution points inside its two boxes; a box with too few points falls back to
 the whole scan's preview points. Corrections are 4 DOF (yaw, x, y, z): Open3D finds correspondences,
-manual.solve_yaw_translation solves, and every link is then combined in one solve (align_graph_4dof)."""
+lib.poses.solve_yaw_translation solves, and every link is then combined in one solve (align_graph_4dof)."""
 from __future__ import annotations
 
 import logging
@@ -14,8 +14,11 @@ import numpy as np
 import open3d as o3d
 
 from . import align_graph_4dof as graph4
-from .geometry import points_in_box
-from .placement import tilt_matrix3
+from .lib.clouds import as_cloud
+from .lib.geometry import points_in_box
+from .lib.groups import connected_groups
+from .lib.poses import (ScanPose, raw_to_world_point, raw_to_world_points, solve_yaw_translation, tilt_of,
+                        world_cloud_points_as_drawn, yaw_gap_deg, yaw_of, yaw_transform)
 from .pts_file import find_scans, read_pts
 
 log = logging.getLogger(__name__)
@@ -34,17 +37,6 @@ SEED_KEEP_MARGIN = 0.02     # matching must line up this much MORE of the box th
 FLAT_NZ = 0.9               # a floor or ceiling: its surface faces within about 25 degrees of straight up or down
 FLAT_PAIR_M = 0.5           # the two scans' floors are paired when this close
 MIN_FLAT_PAIRS = 100        # fewer pairs than this and the link does not change height at the start
-
-
-@dataclass
-class ScanPose:
-    yaw_deg: float = 0.0
-    x_m: float = 0.0
-    y_m: float = 0.0
-    z_m: float = 0.0
-    # hand-set tilt; the solve never changes it
-    pitch_deg: float = 0.0
-    roll_deg: float = 0.0
 
 
 @dataclass
@@ -67,65 +59,6 @@ class AlignResult:
     skipped: list[str] = field(default_factory=list)  # anchors that named an unknown scan
     cancelled: bool = False             # stopped by should_cancel before every anchor was tried
     n_anchors_completed: int = 0        # anchors actually processed, whether or not cancelled
-
-
-def _yaw_matrix2(deg: float) -> np.ndarray:
-    t = np.radians(deg)
-    c, s = np.cos(t), np.sin(t)
-    return np.array([[c, -s], [s, c]])
-
-
-def _yaw_matrix3(deg: float) -> np.ndarray:
-    m = np.eye(3)
-    m[:2, :2] = _yaw_matrix2(deg)
-    return m
-
-
-def _tilt_of(rot: np.ndarray) -> float:
-    """How far this rotation tips the vertical axis, in degrees."""
-    z = rot @ np.array([0.0, 0.0, 1.0])
-    return float(np.degrees(np.arccos(np.clip(z[2], -1.0, 1.0))))
-
-
-def pose_shift_m(payload: dict, pose1: ScanPose, pose2: ScanPose) -> float:
-    """Mean displacement (m) of this scan's preview points between two poses;
-    degrees and metres cannot just be subtracted."""
-    p1 = _world_cloud_points(payload, pose1)
-    p2 = _world_cloud_points(payload, pose2)
-    return float(np.linalg.norm(p1 - p2, axis=1).mean())
-
-
-def _world_cloud_points(payload: dict, pose: ScanPose) -> np.ndarray:
-    xy = np.asarray(payload["xy"], dtype=float)
-    h = np.asarray(payload["h"], dtype=float)
-    r = _yaw_matrix2(pose.yaw_deg)
-    world_xy = xy @ r.T + [pose.x_m, pose.y_m]
-    return np.column_stack([world_xy, h + pose.z_m])
-
-
-def world_cloud_points_as_drawn(payload: dict, pose: ScanPose) -> np.ndarray:
-    """Preview points where the bench draws them: yaw, then hand-set roll and pitch, then translation.
-    _world_cloud_points leaves the tilt out."""
-    local = np.column_stack([np.asarray(payload["xy"], dtype=float).reshape(-1, 2),
-                             np.asarray(payload["h"], dtype=float)])
-    rot = tilt_matrix3(pose.pitch_deg, pose.roll_deg, pose.yaw_deg)
-    return local @ rot.T + np.array([pose.x_m, pose.y_m, pose.z_m])
-
-
-def raw_to_world_points(raw_xyz, level_rotation: np.ndarray, floor_z: float,
-                        pose: ScanPose) -> np.ndarray:
-    """Where raw-frame points (N x 3) are drawn, hand tilt included, as in world_cloud_points_as_drawn."""
-    raw_xyz = np.asarray(raw_xyz, dtype=float).reshape(-1, 3)
-    leveled = raw_xyz @ np.asarray(level_rotation, dtype=float).T
-    local = np.column_stack([leveled[:, :2], leveled[:, 2] - floor_z])
-    rot = tilt_matrix3(pose.pitch_deg, pose.roll_deg, pose.yaw_deg)
-    return local @ rot.T + np.array([pose.x_m, pose.y_m, pose.z_m])
-
-
-def raw_to_world_point(raw_xyz, level_rotation: np.ndarray, floor_z: float,
-                       pose: ScanPose) -> np.ndarray:
-    """`raw_to_world_points` for one point."""
-    return raw_to_world_points(raw_xyz, level_rotation, floor_z, pose)[0]
 
 
 def full_res_region(scans_folder: str, member, cache: dict, margin_m: float = 0.0) -> Optional[np.ndarray]:
@@ -184,8 +117,8 @@ def _icp_4dof(
     """ICP where Open3D finds correspondences and the closed-form 4 DOF solver solves. Points are in the world
     frame, so the result is a correction on top of the current pose. The threshold narrows to dist_threshold by
     iteration 4, or with start_threshold, shrinks 30% a round from there down to dist_threshold."""
-    src_cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(src_pts))
-    tgt_cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(tgt_pts))
+    src_cloud = as_cloud(src_pts)
+    tgt_cloud = as_cloud(tgt_pts)
     point_est = reg.TransformationEstimationPointToPoint()
     one_step = reg.ICPConvergenceCriteria(max_iteration=1)
 
@@ -204,12 +137,10 @@ def _icp_4dof(
         matched_tgt = tgt_pts[corr[:, 1]]
         matched_w = src_weights[corr[:, 0]]
 
-        yaw_deg, t = solve_yaw_translation_safe(matched_src, matched_tgt, matched_w)
-        new_current = np.eye(4)
-        new_current[:3, :3] = _yaw_matrix3(yaw_deg)
-        new_current[:3, 3] = t
+        yaw_deg, t = solve_yaw_translation(matched_src, matched_tgt, matched_w)
+        new_current = yaw_transform(yaw_deg, t)
 
-        delta_yaw = abs(((_yaw_from_matrix(new_current) - _yaw_from_matrix(current)) + 180) % 360 - 180)
+        delta_yaw = yaw_gap_deg(yaw_of(new_current), yaw_of(current))
         delta_t = float(np.linalg.norm(new_current[:3, 3] - current[:3, 3]))
         current = new_current
         if delta_yaw < tol_deg and delta_t < tol_m:
@@ -236,20 +167,10 @@ def _free_tilt_deg(matched_src: np.ndarray, matched_tgt: np.ndarray) -> float:
     """Diagnostic only, never applied: the tilt an unconstrained fit of these matched points would want."""
     n = len(matched_src)
     free_corr = o3d.utility.Vector2iVector(np.column_stack([np.arange(n), np.arange(n)]))
-    src_c = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(matched_src))
-    tgt_c = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(matched_tgt))
+    src_c = as_cloud(matched_src)
+    tgt_c = as_cloud(matched_tgt)
     free = np.asarray(reg.TransformationEstimationPointToPoint().compute_transformation(src_c, tgt_c, free_corr))
-    return _tilt_of(free[:3, :3])
-
-
-def _yaw_from_matrix(m: np.ndarray) -> float:
-    return float(np.degrees(np.arctan2(m[1, 0], m[0, 0])))
-
-
-def solve_yaw_translation_safe(src, tgt, weights):
-    """align_points.solve_yaw_translation, imported lazily to avoid a circular import."""
-    from .align_points import solve_yaw_translation
-    return solve_yaw_translation(src, tgt, weights=weights)
+    return tilt_of(free)
 
 
 @dataclass
@@ -319,8 +240,8 @@ class _PairFit:
 
 def flat_height_gap(src_pts: np.ndarray, tgt_pts: np.ndarray) -> tuple[int, float]:
     """(pairs, median height of src above tgt in m) over tgt's floors and ceilings; (0, nan) if none."""
-    src = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(src_pts))
-    tgt = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(tgt_pts))
+    src = as_cloud(src_pts)
+    tgt = as_cloud(tgt_pts)
     tgt.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.15, max_nn=30))
     corr = np.asarray(reg.evaluate_registration(src, tgt, FLAT_PAIR_M, np.eye(4)).correspondence_set)
     if len(corr):
@@ -350,8 +271,8 @@ def _settle_height(match: "_MatchSet", transform: np.ndarray) -> tuple[np.ndarra
 
 def _inlier_share(src_pts: np.ndarray, tgt_pts: np.ndarray, transform: np.ndarray, radius_m: float) -> float:
     """Share of `src_pts`, moved by `transform`, that have a point of `tgt_pts` within `radius_m`."""
-    src = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(src_pts))
-    tgt = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(tgt_pts))
+    src = as_cloud(src_pts)
+    tgt = as_cloud(tgt_pts)
     return float(reg.evaluate_registration(src, tgt, radius_m, np.asarray(transform, dtype=float)).fitness)
 
 
@@ -371,8 +292,8 @@ def _fit_pair(match: _MatchSet, seed: np.ndarray, icp_distance_m: float, icp_max
         return _PairFit(fit.transform, icp_share, fit.discarded_tilt_deg, fit.correspondences,
                         f"matching moved the boxes from {seed_share:.0%} to {icp_share:.0%} lined up within "
                         f"{INLIER_M * 100:.0f} cm")
-    src_c = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(match.src_pts))
-    tgt_c = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(match.tgt_pts))
+    src_c = as_cloud(match.src_pts)
+    tgt_c = as_cloud(match.tgt_pts)
     corr = np.asarray(reg.evaluate_registration(src_c, tgt_c, REGION_FINAL_M, np.asarray(seed, dtype=float)).correspondence_set)
     tilt = _free_tilt_deg(match.src_pts[corr[:, 0]], match.tgt_pts[corr[:, 1]]) if len(corr) >= 2 else 0.0
     return _PairFit(np.asarray(seed, dtype=float), seed_share, tilt, corr,
@@ -557,9 +478,9 @@ def align_from_anchors(
             p = start[b]
             t_now = np.array([p.x_m, p.y_m, p.z_m])
             t_new = correction[:3, :3] @ t_now + correction[:3, 3]
-            yaw_delta = np.radians(_yaw_from_matrix(correction))
+            yaw_delta = np.radians(yaw_of(correction))
             corr = fit.correspondences
-            tgt_cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(tgt_pts))
+            tgt_cloud = as_cloud(tgt_pts)
             tgt_cloud.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.4, max_nn=30))
             matched_b, matched_a = moved_pts[corr[:, 0]], tgt_pts[corr[:, 1]]
             normals, weights = np.asarray(tgt_cloud.normals)[corr[:, 1]], src_weights[corr[:, 0]]
@@ -583,20 +504,10 @@ def align_from_anchors(
     # scan still, so the whole group cannot drift together.
     in_graph = [n for n in appeared if any(n in (c.a, c.b) for c in constraints)]
     fixed_names = {n for n in in_graph if is_fixed(n)}
-    parent = {n: n for n in in_graph}
-
-    def find(x: str) -> str:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    for c in constraints:
-        parent[find(c.a)] = find(c.b)
-    for n in in_graph:
-        members_of = [m for m in in_graph if find(m) == find(n)]
-        if not any(m in fixed_names for m in members_of):
-            fixed_names.add(members_of[0])
+    at = {n: k for k, n in enumerate(in_graph)}
+    for group in connected_groups(len(in_graph), [(at[c.a], at[c.b]) for c in constraints]):
+        if not any(in_graph[k] in fixed_names for k in group):
+            fixed_names.add(in_graph[group[0]])
     free = [n for n in in_graph if n not in fixed_names]
     deltas = graph4.solve(constraints, free) if constraints else {}
 

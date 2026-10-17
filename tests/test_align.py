@@ -11,8 +11,10 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from open_point_stitch.align_anchors import align_from_anchors, ScanPose, pose_shift_m  # noqa: E402
+from open_point_stitch.align_anchors import align_from_anchors  # noqa: E402
+from open_point_stitch.lib.poses import ScanPose, pose_shift_m  # noqa: E402
 from open_point_stitch.placement import Anchor, AnchorMember  # noqa: E402
+from open_point_stitch.lib.poses import yaw_matrix2  # noqa: E402
 
 
 def _room_points(rng, n=800):
@@ -32,16 +34,10 @@ def _payload_from_points(pts):
     }
 
 
-def _yaw_matrix2(deg):
-    t = np.radians(deg)
-    c, s = np.cos(t), np.sin(t)
-    return np.array([[c, -s], [s, c]])
-
-
 def _world_points(payload, pose):
     xy = np.asarray(payload["xy"])
     h = np.asarray(payload["h"])
-    r = _yaw_matrix2(pose.yaw_deg)
+    r = yaw_matrix2(pose.yaw_deg)
     wxy = xy @ r.T + [pose.x_m, pose.y_m]
     return np.column_stack([wxy, h + pose.z_m])
 
@@ -67,7 +63,7 @@ def _true_and_wrong_pair(true_rel_yaw=10.0, true_rel_x=5.0, true_rel_y=-3.0,
     pose_b_true = ScanPose(yaw_deg=pose_a.yaw_deg + true_rel_yaw,
                            x_m=pose_a.x_m + true_rel_x, y_m=pose_a.y_m + true_rel_y,
                            z_m=pose_a.z_m)
-    r_true = _yaw_matrix2(pose_b_true.yaw_deg)
+    r_true = yaw_matrix2(pose_b_true.yaw_deg)
     local_b_xy = (true_world[:, :2] - [pose_b_true.x_m, pose_b_true.y_m]) @ r_true
     local_b = np.column_stack([local_b_xy, true_world[:, 2] - pose_b_true.z_m])
 
@@ -264,7 +260,7 @@ def test_agreement_weights_change_the_result():
 
 def test_points_as_drawn_include_hand_tilt_and_match_the_placement_matrix():
     """The heatmap's points sit where the bench draws them: tilt included, identical to Placement.matrix()."""
-    from open_point_stitch.align_anchors import _world_cloud_points, world_cloud_points_as_drawn
+    from open_point_stitch.lib.poses import world_cloud_points, world_cloud_points_as_drawn
     from open_point_stitch.placement import Placement
 
     rng = np.random.default_rng(3)
@@ -277,16 +273,16 @@ def test_points_as_drawn_include_hand_tilt_and_match_the_placement_matrix():
     assert np.allclose(got, local @ m[:3, :3].T + m[:3, 3], atol=1e-9), "not where Placement.matrix() puts them"
 
     flat = ScanPose(yaw_deg=37.0, x_m=2.5, y_m=-1.0, z_m=0.4)
-    assert np.allclose(world_cloud_points_as_drawn(payload, flat), _world_cloud_points(payload, flat), atol=1e-9), (
+    assert np.allclose(world_cloud_points_as_drawn(payload, flat), world_cloud_points(payload, flat), atol=1e-9), (
         "with no tilt the two helpers must agree, or something else about the heatmap moved")
-    off = float(np.abs(got - _world_cloud_points(payload, pose)).max())
+    off = float(np.abs(got - world_cloud_points(payload, pose)).max())
     assert off > 0.05, f"the untilted helper is only {off:.3f} m off for a 2/-3.5 degree tilt: the test proves nothing"
 
 
 def test_the_placement_matrix_puts_raw_points_where_the_bench_draws_them_with_a_floor_level():
     """The export and the seeded align use Placement.matrix(), and the bench draws height above the scan's own floor;
     the two must agree when the floor level is not zero."""
-    from open_point_stitch.align_anchors import world_cloud_points_as_drawn
+    from open_point_stitch.lib.poses import world_cloud_points_as_drawn
     from open_point_stitch.placement import Placement
 
     rng = np.random.default_rng(11)
@@ -305,7 +301,7 @@ def test_the_placement_matrix_puts_raw_points_where_the_bench_draws_them_with_a_
 
 def _true_local(world, pose):
     """A scan's own local points for world points seen from its TRUE pose (yaw only, as these tests use)."""
-    xy = (world[:, :2] - [pose.x_m, pose.y_m]) @ _yaw_matrix2(pose.yaw_deg)
+    xy = (world[:, :2] - [pose.x_m, pose.y_m]) @ yaw_matrix2(pose.yaw_deg)
     return np.column_stack([xy, world[:, 2] - pose.z_m])
 
 
@@ -574,14 +570,14 @@ def test_flat_boxes_fix_the_height_and_the_run_says_the_placement_was_kept():
 
 def _drawn_local(world_pts, pose):
     """Inverse of `world_cloud_points_as_drawn`: where world points sit in a tilted scan's own frame."""
-    from open_point_stitch.placement import tilt_matrix3
+    from open_point_stitch.lib.poses import tilt_matrix3
     rot = tilt_matrix3(pose.pitch_deg, pose.roll_deg, pose.yaw_deg)
     return (np.asarray(world_pts, dtype=float) - [pose.x_m, pose.y_m, pose.z_m]) @ rot
 
 
 def test_links_on_hand_tilted_scans_land_where_the_scans_are_drawn():
     """The link solve uses hand pitch/roll, so link ends meet where the bench draws them."""
-    from open_point_stitch.align_anchors import world_cloud_points_as_drawn
+    from open_point_stitch.lib.poses import world_cloud_points_as_drawn
     for preview_only in (False, True):
         with tempfile.TemporaryDirectory() as folder:
             rng = np.random.default_rng(9)
@@ -748,7 +744,7 @@ def test_full_res_region_returns_exactly_the_points_in_the_box_and_reads_each_fi
 def test_raw_to_world_points_agrees_with_the_preview_convention_and_the_single_point_form():
     """The full-resolution points are moved to the world by the same rule the preview points are, or the two paths
     would disagree about where a scan sits."""
-    from open_point_stitch.align_anchors import raw_to_world_point, raw_to_world_points, world_cloud_points_as_drawn
+    from open_point_stitch.lib.poses import raw_to_world_point, raw_to_world_points, world_cloud_points_as_drawn
     rng = np.random.default_rng(4)
     level, floor_z = _small_tilt(2.5, axis=(0.2, 1.0, 0.0)), -1.6
     raw = np.column_stack([rng.uniform(-6, 6, 50), rng.uniform(-6, 6, 50), rng.uniform(-2.8, 1.5, 50)])
@@ -761,18 +757,12 @@ def test_raw_to_world_points_agrees_with_the_preview_convention_and_the_single_p
 
 
 def test_points_in_box_is_inclusive_and_never_narrower_than_the_floor():
-    from open_point_stitch.geometry import MIN_HALF_EXTENT_M, points_in_box
+    from open_point_stitch.lib.geometry import MIN_HALF_EXTENT_M, points_in_box
     pts = np.array([[0.5, 0.0, 0.0], [0.5001, 0.0, 0.0], [MIN_HALF_EXTENT_M, 0.0, 0.0], [MIN_HALF_EXTENT_M + 0.01, 0.0, 0.0]])
     assert points_in_box(pts, (0, 0, 0), (1.0, 1.0, 1.0)).tolist() == [True, False, True, True]
     assert points_in_box(pts, (0, 0, 0), (0.0, 0.0, 0.0)).tolist() == [False, False, True, False]   # a click still gets a margin
 
 
 if __name__ == "__main__":
-    failures = 0
-    for name, fn in sorted(list(globals().items())):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn(); print(f"PASS {name}")
-            except Exception as exc:
-                failures += 1; print(f"FAIL {name}: {exc}")
-    raise SystemExit(1 if failures else 0)
+    from support import run_tests
+    raise SystemExit(run_tests(globals()))

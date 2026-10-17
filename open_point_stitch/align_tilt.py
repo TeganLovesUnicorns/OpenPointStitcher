@@ -8,8 +8,8 @@ from typing import Optional
 
 import numpy as np
 
-from .align_anchors import ScanPose
-from .placement import tilt_matrix3
+from .lib.poses import ScanPose
+from .lib.poses import tilt_matrix3
 
 log = logging.getLogger(__name__)
 
@@ -291,7 +291,7 @@ def suggest_tilt(payloads: dict[str, dict], poses: dict[str, ScanPose], locked: 
     fixed = np.array([bool(locked.get(n, False)) or (subset is not None and n not in subset) for n in names])
 
     def world_of(n: str, p: ScanPose) -> np.ndarray:
-        return local[n] @ tilt_matrix3(p.pitch_deg, p.roll_deg, p.yaw_deg).T + np.array([p.x_m, p.y_m, p.z_m])
+        return p.place(local[n])
 
     def maps_of(poses_now: dict) -> dict:
         return {n: surface_map(world_of(n, poses_now[n]), local[n][:, 2]) for n in names}
@@ -389,7 +389,7 @@ def summarise(before: list[PairReport], after: list[PairReport]) -> dict:
 def near_share(payloads: dict[str, dict], poses: dict[str, ScanPose], within_m: float = 0.05) -> dict[str, float]:
     """Per scan, the share of its preview points within `within_m` of any OTHER scan, as the bench draws
     them. The solve does not optimise this, so it is an independent check on the suggestion."""
-    from .align_anchors import world_cloud_points_as_drawn
+    from .lib.poses import world_cloud_points_as_drawn
     from .overlap import nearest_distances
     names = [n for n in poses if n in payloads]
     world = {n: world_cloud_points_as_drawn(payloads[n], poses[n]) for n in names}

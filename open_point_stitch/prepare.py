@@ -14,6 +14,7 @@ import numpy as np
 import open3d as o3d
 
 from .config import PipelineConfig
+from .lib.clouds import as_cloud
 from .pts_file import Scan
 
 log = logging.getLogger(__name__)
@@ -128,10 +129,7 @@ def _compute_prepared(name: str, points: np.ndarray, colors, cfg: PipelineConfig
         near = np.hypot(points[:, 0], points[:, 1]) <= cfg.max_range_m
         if near.sum() >= 100:
             points, colors = points[near], (colors[near] if colors is not None else None)
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points)
-    if colors is not None:
-        pcd.colors = o3d.utility.Vector3dVector(colors)
+    pcd = as_cloud(points, colors)
     down = pcd.voxel_down_sample(cfg.voxel_size)
 
     if len(down.points) < 10:
@@ -201,11 +199,7 @@ def _prepare_in_worker(task) -> dict:
 
 
 def _rebuild_prepared(name: str, index: int, arrays: dict, cfg: PipelineConfig) -> Prepared:
-    down = o3d.geometry.PointCloud()
-    down.points = o3d.utility.Vector3dVector(arrays["points"])
-    down.normals = o3d.utility.Vector3dVector(arrays["normals"])
-    if arrays["colors"] is not None:
-        down.colors = o3d.utility.Vector3dVector(arrays["colors"])
+    down = as_cloud(arrays["points"], arrays["colors"], arrays["normals"])
     fpfh = o3d.pipelines.registration.Feature()
     fpfh.data = arrays["fpfh"]
     return _finish_prepared(name, index, down, fpfh, arrays["n_full"], arrays["spacing"], cfg)

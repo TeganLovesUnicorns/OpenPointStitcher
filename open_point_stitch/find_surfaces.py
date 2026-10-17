@@ -13,7 +13,7 @@ from typing import Optional
 import numpy as np
 import open3d as o3d
 
-from . import geometry
+from .lib import geometry
 from .footprint import footprint
 from .find_true_walls import find_true_wall
 from .find_walls import fit_plane

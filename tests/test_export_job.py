@@ -92,11 +92,5 @@ def test_export_job_with_no_saved_placement_fails_in_plain_words():
 
 
 if __name__ == "__main__":
-    failures = 0
-    for name, fn in sorted(list(globals().items())):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn(); print(f"PASS {name}")
-            except Exception as exc:
-                failures += 1; print(f"FAIL {name}: {exc}")
-    raise SystemExit(1 if failures else 0)
+    from support import run_tests
+    raise SystemExit(run_tests(globals()))

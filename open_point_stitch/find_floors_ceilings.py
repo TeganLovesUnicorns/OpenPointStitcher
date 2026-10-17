@@ -9,7 +9,8 @@ import cv2
 import numpy as np
 import open3d as o3d
 
-from . import geometry
+from .lib.clouds import as_cloud
+from .lib import geometry
 
 CELL_M = 0.05             # plan grid: each 5 cm cell gets at most one floor and one ceiling height
 BIN_M = 0.02              # height step used to find the lowest and highest surface in a cell
@@ -82,7 +83,7 @@ class Piece:
 
 def _flat_mask(points: np.ndarray) -> np.ndarray:
     """Points whose local surface is within 60 deg of level. Normal sign does not matter here."""
-    pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+    pcd = as_cloud(points)
     pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=NORMAL_RADIUS_M, max_nn=30))
     return np.abs(np.asarray(pcd.normals)[:, 2]) > FLAT_NZ
 
@@ -452,12 +453,3 @@ def on_pieces(xy: np.ndarray, h: np.ndarray, pieces: list[dict], band_m: float,
         inside[ok] = grid[ij[ok, 1], ij[ok, 0]] > 0
         keep[idx[inside]] = True
     return keep
-
-
-def levelled_points(points: np.ndarray, level_rotation, floor_z_local_m: float | None) -> np.ndarray:
-    """A scan's raw points in the frame the bench uses: levelled, its detected floor at 0."""
-    r = np.asarray(level_rotation, dtype=float)
-    out = points @ r.T
-    if floor_z_local_m is not None:
-        out[:, 2] -= floor_z_local_m
-    return out

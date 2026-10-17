@@ -9,7 +9,9 @@ import re
 from typing import Optional
 
 from .exclusions import filter_scan
-from .find_floors_ceilings import find_floors_and_ceilings, levelled_points
+from .find_floors_ceilings import find_floors_and_ceilings
+from .lib.files import write_json_atomic
+from .lib.poses import levelled_points
 from .placement import Exclusion
 from .pts_file import find_scans, read_pts
 
@@ -47,11 +49,7 @@ def cached_pieces(path: str, cache_dir: str, level_rotation, floor_z: float,
     except (OSError, ValueError):
         pass
     pieces = [p.to_json() for p in find_floors_and_ceilings(levelled_scan(path, level_rotation, floor_z, exclusions))]
-    os.makedirs(os.path.dirname(cpath), exist_ok=True)
-    tmp = cpath + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump({"_key": key, "pieces": pieces}, fh)
-    os.replace(tmp, cpath)
+    write_json_atomic(cpath, {"_key": key, "pieces": pieces})
     return pieces
 
 

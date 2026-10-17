@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from .lib.poses import rot2
+
 CELL_M = 0.05          # plan squares
 LEVEL_M = 0.05         # height levels inside a square
 MIN_TALL_M = 0.8       # a square counts when its points span at least this many levels' worth of height
@@ -75,7 +77,7 @@ def walls_from_above(points: np.ndarray, normals: np.ndarray) -> list[dict]:
     middle = p[:, :2].mean(axis=0)
     four = 4 * np.arctan2(n[:, 1], n[:, 0])              # walls at right angles agree when x4. #walls-above-grid
     turn = float(np.arctan2(np.sin(four).sum(), np.cos(four).sum()) / 4)
-    rot = np.array([[np.cos(turn), np.sin(turn)], [-np.sin(turn), np.cos(turn)]])   # scan -> grid
+    rot = rot2(-turn)                                    # scan -> grid
     p[:, :2] = (p[:, :2] - middle) @ rot.T
     n[:, :2] = n[:, :2] @ rot.T
     out = []

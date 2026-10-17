@@ -9,6 +9,8 @@ import os
 import threading
 import time
 import uuid
+
+from .lib.files import write_json_atomic
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -47,11 +49,7 @@ class JobStore:
         if not self._dir:
             return
         try:
-            os.makedirs(self._dir, exist_ok=True)
-            tmp = self._path(job["id"]) + ".tmp"
-            with open(tmp, "w") as fh:
-                json.dump(job, fh, default=str)
-            os.replace(tmp, self._path(job["id"]))
+            write_json_atomic(self._path(job["id"]), job, default=str)
         except OSError:
             log.exception("could not write the record of job %s", job.get("id"))
 

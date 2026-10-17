@@ -8,6 +8,8 @@ from typing import Optional
 import numpy as np
 from scipy.spatial import cKDTree
 
+from .lib.poses import yaw_gap_deg, yaw_of
+
 NEAR_M = 0.05        # a point fits when another scan's point is this close
 GOOD_FIT = 0.20      # a link is "good" when this share of the smaller scan fits
 HURT_DROP = 0.05     # a good link losing more than this share of fit counts as hurt
@@ -69,8 +71,7 @@ def shift_of(points: np.ndarray, m0: np.ndarray, m1: np.ndarray) -> tuple[float,
     """(mean point shift m, yaw turn deg, height change m) of one scan between two world matrices."""
     p0 = points @ m0[:3, :3].T + m0[:3, 3]
     p1 = points @ m1[:3, :3].T + m1[:3, 3]
-    turn = np.degrees(np.arctan2(m1[1, 0], m1[0, 0]) - np.arctan2(m0[1, 0], m0[0, 0]))
-    return float(np.linalg.norm(p1 - p0, axis=1).mean()), float(abs((turn + 180) % 360 - 180)), float(m1[2, 3] - m0[2, 3])
+    return float(np.linalg.norm(p1 - p0, axis=1).mean()), yaw_gap_deg(yaw_of(m1), yaw_of(m0)), float(m1[2, 3] - m0[2, 3])
 
 
 def measure_links(points: dict, start: dict, final: dict, outcomes: list[dict]) -> list[Link]:

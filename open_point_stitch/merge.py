@@ -13,6 +13,7 @@ import numpy as np
 import open3d as o3d
 
 from .config import PipelineConfig
+from .lib.clouds import as_cloud
 from .pts_file import Scan, write_pts
 
 log = logging.getLogger(__name__)
@@ -32,11 +33,7 @@ class MergeResult:
         return int(self.points.shape[0])
 
     def to_o3d(self) -> o3d.geometry.PointCloud:
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(self.points)
-        if self.colors is not None:
-            pcd.colors = o3d.utility.Vector3dVector(self.colors)
-        return pcd
+        return as_cloud(self.points, self.colors)
 
     @property
     def cloud(self) -> o3d.geometry.PointCloud:
@@ -101,8 +98,7 @@ def merge_scans(
 
     if cfg.outlier_nb_neighbors:
         log.warning("Removing statistical outliers. Points will be lost.")
-        work = o3d.geometry.PointCloud()
-        work.points = o3d.utility.Vector3dVector(points)
+        work = as_cloud(points)
         _, kept = work.remove_statistical_outlier(
             nb_neighbors=cfg.outlier_nb_neighbors,
             std_ratio=cfg.outlier_std_ratio,

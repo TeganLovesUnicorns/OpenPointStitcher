@@ -12,6 +12,7 @@ from typing import Optional
 import numpy as np
 import open3d as o3d
 
+from .lib.poses import yaw_matrix2, yaw_transform
 from .limits import single_threaded
 
 log = logging.getLogger(__name__)
@@ -212,9 +213,7 @@ def yaw_sweep(
 
     results: list[YawCandidate] = []
     for yaw in np.arange(0.0, 360.0, yaw_step_deg):
-        th = np.radians(yaw)
-        c, s = np.cos(th), np.sin(th)
-        rot = np.array([[c, -s], [s, c]])
+        rot = yaw_matrix2(yaw)
         rotated = src_rel @ rot.T
         src_img = _rasterise(rotated, grid, res, zero) * window
         dy, dx, peak = _phase_correlate(src_img, tgt_img)
@@ -256,21 +255,6 @@ def _solve_dz(src_z: np.ndarray, tgt_z: np.ndarray,
     corr = np.correlate(ht, hs, mode="full")
     shift = int(np.argmax(corr)) - (len(hs) - 1)
     return float(shift * step)
-
-
-def yaw_transform(yaw_deg: float, t: np.ndarray) -> np.ndarray:
-    th = np.radians(yaw_deg)
-    c, s = np.cos(th), np.sin(th)
-    m = np.eye(4)
-    m[:3, :3] = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
-    m[:3, 3] = t
-    return m
-
-
-def tilt_of(transform: np.ndarray) -> float:
-    """How far this transform tips the vertical axis, in degrees."""
-    z = transform[:3, :3] @ np.array([0.0, 0.0, 1.0])
-    return float(np.degrees(np.arccos(np.clip(z[2], -1.0, 1.0))))
 
 
 def coarse_candidates(

@@ -12,6 +12,8 @@ import open3d as o3d
 
 from . import colour
 from .config import PipelineConfig
+from .lib.geometry import fold_between
+from .lib.poses import tilt_of
 
 log = logging.getLogger(__name__)
 
@@ -90,8 +92,7 @@ def score_candidate_fast(
     moved = (T[:3, :3] @ src_pts.T).T + T[:3, 3]
     moved_nrm = (T[:3, :3] @ src_nrm.T).T
 
-    up = T[:3, :3] @ np.array([0.0, 0.0, 1.0])
-    v.tilt_deg = float(np.degrees(np.arccos(np.clip(up[2], -1.0, 1.0))))
+    v.tilt_deg = tilt_of(T)
 
     q = o3d.core.Tensor(moved, dtype=o3d.core.float64, device=device)
     idx_t, sq_t = target_nns.knn_search(q, 1)
@@ -154,7 +155,7 @@ def plane_colour_agreement(
             dist = float(np.linalg.norm(c - u.centroid))
             if dist > cfg.vote_plane_position_bound_m:
                 continue
-            ang = float(np.degrees(np.arccos(np.clip(abs(float(n @ u.normal)), -1.0, 1.0))))
+            ang = fold_between(n, u.normal)
             if ang < best_ang:
                 best, best_ang = u, ang
         if best is None:

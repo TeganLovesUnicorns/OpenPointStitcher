@@ -3,6 +3,14 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.50.2 (2026-10-17)
+
+- Shared code moved into `open_point_stitch/lib/` (poses, geometry, file saving, grouping, point clouds) and the
+  copies of it removed; alignment results are unchanged.
+- Every saved file (placements, reports, job records, caches, DXF and PNG drawings) is now written whole or not at
+  all, so a crash or a stopped job can no longer leave a half-written file.
+- The page's job buttons and the test and QA tools share one request and job-running path.
+
 ## 0.50.1 (2026-10-16)
 
 - Licensed under the GNU AGPL v3. `LICENSE` and the third-party license list ship inside the Docker image.

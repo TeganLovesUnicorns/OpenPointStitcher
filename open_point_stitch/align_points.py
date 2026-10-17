@@ -7,12 +7,13 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 import open3d as o3d
 
-from .align_gravity import estimate_level, tilt_of
+from .align_gravity import estimate_level
+from .lib.files import write_json_atomic
+from .lib.poses import solve_yaw_translation, tilt_of, yaw_transform
 
 log = logging.getLogger(__name__)
 
@@ -27,54 +28,6 @@ class ManualAlignment:
     @property
     def rms_residual(self) -> float:
         return float(np.sqrt(np.mean(self.residuals ** 2))) if self.residuals.size else 0.0
-
-
-def solve_yaw_translation(
-    src: np.ndarray, tgt: np.ndarray, weights: Optional[np.ndarray] = None,
-) -> tuple[float, np.ndarray]:
-    """Closed-form least-squares yaw and translation mapping src onto tgt, both levelled. Optional weights (one per
-    pair) weight every sum and mean; equal weights or None give the unweighted result exactly."""
-    src = np.asarray(src, dtype=float).reshape(-1, 3)
-    tgt = np.asarray(tgt, dtype=float).reshape(-1, 3)
-    if src.shape != tgt.shape or src.shape[0] < 2:
-        raise ValueError("need at least 2 matching points in each cloud")
-
-    if weights is None:
-        w = np.ones(src.shape[0], dtype=float)
-    else:
-        w = np.asarray(weights, dtype=float).reshape(-1)
-        if w.shape[0] != src.shape[0]:
-            raise ValueError("weights must have one entry per correspondence")
-        if np.any(np.isnan(w)):
-            # w < 0 below is False for NaN (NaN fails every comparison), so
-            # a NaN weight passed the old check silently and produced a NaN
-            # transform further down. Caught explicitly here instead.
-            raise ValueError("weights must not contain NaN")
-        if np.any(w < 0):
-            raise ValueError("weights must be non-negative")
-    wsum = float(w.sum())
-    if wsum <= 0:
-        raise ValueError("weights sum to zero; nothing to solve from")
-
-    sc = (w[:, None] * src[:, :2]).sum(axis=0) / wsum
-    tc = (w[:, None] * tgt[:, :2]).sum(axis=0) / wsum
-    a = src[:, :2] - sc
-    b = tgt[:, :2] - tc
-
-    num = float(np.sum(w * (a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0])))
-    den = float(np.sum(w * (a[:, 0] * b[:, 0] + a[:, 1] * b[:, 1])))
-    if abs(num) < 1e-12 and abs(den) < 1e-12:
-        raise ValueError(
-            "picked points are coincident, so yaw is undetermined. Pick two "
-            "features that are far apart."
-        )
-    theta = float(np.arctan2(num, den))
-
-    c, s = np.cos(theta), np.sin(theta)
-    rot = np.array([[c, -s], [s, c]])
-    t_xy = tc - rot @ sc
-    t_z = float(np.sum(w * (tgt[:, 2] - src[:, 2])) / wsum)
-    return float(np.degrees(theta)), np.array([t_xy[0], t_xy[1], t_z])
 
 
 def solve_from_correspondences(
@@ -93,11 +46,7 @@ def solve_from_correspondences(
 
     yaw_deg, t = solve_yaw_translation(sp, tp)
 
-    th = np.radians(yaw_deg)
-    c, s = np.cos(th), np.sin(th)
-    yt = np.eye(4)
-    yt[:3, :3] = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
-    yt[:3, 3] = t
+    yt = yaw_transform(yaw_deg, t)
 
     moved = (yt[:3, :3] @ sp.T).T + yt[:3, 3]
     residuals = np.linalg.norm(moved - tp, axis=1)
@@ -189,7 +138,5 @@ def save_seed(path: str, src_name: str, tgt_name: str,
         "rms_residual_m": alignment.rms_residual,
         "tilt_deg": tilt_of(alignment.transform),
     }
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with open(path, "w") as fh:
-        json.dump(raw, fh, indent=2)
+    write_json_atomic(path, raw, indent=2)
     log.info("saved seed for %s -> %s in %s", src_name, tgt_name, path)

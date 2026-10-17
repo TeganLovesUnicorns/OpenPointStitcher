@@ -37,13 +37,16 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 from open_point_stitch import __version__
 from open_point_stitch.config import PipelineConfig
 from open_point_stitch.jobs import JobStore
-from open_point_stitch.align_anchors import align_from_anchors, pose_shift_m, ScanPose, world_cloud_points_as_drawn
+from open_point_stitch.align_anchors import align_from_anchors
 from open_point_stitch.align_tilt import apply_suggestions, full_resolution_inputs, near_share, suggest_tilt, summarise
 from open_point_stitch.overlap import nearest_distances
 from open_point_stitch.merge_placed import place_merge
 from open_point_stitch.placement import (SCHEMA as PLACEMENT_SCHEMA, Anchor, AnchorMember, Exclusion, Placement,
                                     anchors_from_landmarks, is_placement_schema, load_placements,
-                                    relative_transform, yaw_matrix3)
+                                    relative_transform)
+from open_point_stitch.lib.files import write_json_atomic
+from open_point_stitch.lib.poses import (ScanPose, pose_shift_m, rotation_angle_deg, tilt_of, world_cloud_points_as_drawn,
+                                        yaw_gap_deg, yaw_matrix2, yaw_of, yaw_transform)
 from open_point_stitch.export_plan import default_band, footprints_from_payloads, plan_cut, write_plan
 from open_point_stitch.measure_walls import measure_walls, summarise as summarise_walls
 from open_point_stitch.exclusions import filter_scans, for_export
@@ -216,8 +219,7 @@ def _write_timestamped_report(out_dir: str, prefix: str, result: dict) -> str:
     folder = project_mod.reports_dir(out_dir)
     os.makedirs(folder, exist_ok=True)
     path = _stamped_path(folder, prefix, "json")
-    with open(path, "w") as fh:
-        json.dump(result, fh, indent=2)
+    write_json_atomic(path, result, indent=2)
     log.info("wrote %s report to %s", prefix, path)
     return path
 
@@ -237,8 +239,7 @@ def _note_latest_export(out_dir: str, **paths: str) -> None:
         with open(path) as fh:
             latest = json.load(fh)
     latest.update({k: os.path.basename(v) for k, v in paths.items() if v})
-    with open(path, "w") as fh:
-        json.dump(latest, fh, indent=1)
+    write_json_atomic(path, latest, indent=1)
 
 
 def _write_align_auto_report(out_dir: str, result: dict) -> str:
@@ -316,10 +317,7 @@ def _compute_deviation(app: "App") -> dict:
 
     poses: dict[str, ScanPose] = {}
     for s in data.get("scans", []):
-        poses[s["name"]] = ScanPose(
-            yaw_deg=float(s.get("yaw_deg", 0.0)), x_m=float(s.get("x_m", 0.0)),
-            y_m=float(s.get("y_m", 0.0)), z_m=float(s.get("z_m", 0.0)),
-            pitch_deg=float(s.get("pitch_deg", 0.0)), roll_deg=float(s.get("roll_deg", 0.0)))
+        poses[s["name"]] = ScanPose.from_dict(s)
 
     with app._lock:
         payloads = {n: p for n, p in app.payloads.items() if n in poses}
@@ -361,9 +359,7 @@ def _compute_tilt_suggestion(app: "App", body: dict) -> dict:
     poses: dict[str, ScanPose] = {}
     locked: dict[str, bool] = {}
     for s in given:
-        poses[s["name"]] = ScanPose(
-            yaw_deg=float(s.get("yaw_deg", 0.0)), x_m=float(s.get("x_m", 0.0)), y_m=float(s.get("y_m", 0.0)),
-            z_m=float(s.get("z_m", 0.0)), pitch_deg=float(s.get("pitch_deg", 0.0)), roll_deg=float(s.get("roll_deg", 0.0)))
+        poses[s["name"]] = ScanPose.from_dict(s)
         locked[s["name"]] = bool(s.get("locked", False))
 
     with app._lock:
@@ -456,12 +452,7 @@ def _write_placement_locked(out_dir: str, data: dict, backup_first: bool = True)
     backup = _backup_placement(out_dir) if backup_first else None
     if backup:
         log.info("backed up the previous placement to %s before overwriting it", backup)
-    tmp_path = path + ".tmp"
-    with open(tmp_path, "w") as fh:
-        json.dump(_for_disk(data), fh, separators=(",", ":"))     # compact
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp_path, path)
+    write_json_atomic(path, _for_disk(data), separators=(",", ":"))     # compact
     if backup:
         _auto_tidy_backups(out_dir, data.get("settings", {}))
 
@@ -576,10 +567,7 @@ def _run_align(app: "App", job_id: str, params: dict) -> None:
         poses = {}
         locked = {}
         for s in data["scans"]:
-            poses[s["name"]] = ScanPose(yaw_deg=s["yaw_deg"], x_m=s["x_m"],
-                                        y_m=s["y_m"], z_m=s["z_m"],
-                                        pitch_deg=float(s.get("pitch_deg", 0.0)),
-                                        roll_deg=float(s.get("roll_deg", 0.0)))
+            poses[s["name"]] = ScanPose.from_dict(s, strict=True)
             locked[s["name"]] = bool(s.get("locked", False))
 
         anchors = _anchors_from_placement(data)
@@ -621,11 +609,10 @@ def _run_align(app: "App", job_id: str, params: dict) -> None:
                 "pitch_deg": round(pose.pitch_deg, 4),
                 "roll_deg": round(pose.roll_deg, 4),
             }
-            human = ScanPose(yaw_deg=s["human_yaw_deg"], x_m=s["human_x_m"],
-                             y_m=s["human_y_m"], z_m=s["human_z_m"])
+            human = ScanPose.from_dict(s, strict=True, prefix="human_")
             if name in app.payloads:
                 update["align_moved_m"] = round(pose_shift_m(app.payloads[name], human, pose), 4)
-                update["align_moved_deg"] = round(abs((pose.yaw_deg - s["human_yaw_deg"] + 180) % 360 - 180), 3)
+                update["align_moved_deg"] = round(yaw_gap_deg(pose.yaw_deg, s["human_yaw_deg"]), 3)
             # else: this scan's preview never built, so align_from_anchors
             # could not have moved it either (it can only move a scan whose
             # payload it has); leave whatever align_moved_* it already had.
@@ -663,9 +650,8 @@ def _decompose_pose(world_matrix: np.ndarray, level_rotation: np.ndarray,
     the scan's own levelling. floor_z is the scan's floor level, which matrix() takes off before rotating."""
     level_rotation = np.asarray(level_rotation, dtype=float)
     r_yaw_only = world_matrix[:3, :3] @ level_rotation.T
-    yaw_deg = float(np.degrees(np.arctan2(r_yaw_only[1, 0], r_yaw_only[0, 0])))
-    z_axis = r_yaw_only @ np.array([0.0, 0.0, 1.0])
-    tilt_deg = float(np.degrees(np.arccos(np.clip(z_axis[2], -1.0, 1.0))))
+    yaw_deg = yaw_of(r_yaw_only)
+    tilt_deg = tilt_of(r_yaw_only)
     t = world_matrix[:3, 3] + r_yaw_only @ np.array([0.0, 0.0, floor_z])
     return yaw_deg % 360.0, float(t[0]), float(t[1]), float(t[2]), tilt_deg
 
@@ -677,18 +663,13 @@ def _centre_shift_for_dropped_tilt(world: np.ndarray, kept: np.ndarray,
     c = np.asarray(centre_raw, dtype=float)
     shift = (world[:3, :3] @ c + world[:3, 3]) - (kept[:3, :3] @ c + kept[:3, 3])
     turn = world[:3, :3] @ kept[:3, :3].T
-    dropped = float(np.degrees(np.arccos(np.clip((np.trace(turn) - 1.0) / 2.0, -1.0, 1.0))))
+    dropped = rotation_angle_deg(turn)
     return shift, dropped
 
 
 def _yaw_and_translation_only(transform: np.ndarray) -> np.ndarray:
     """Keep only the yaw and translation of a 4x4 rigid transform, so the root's tilt is not applied to every scan."""
-    r = transform[:3, :3]
-    yaw_deg = float(np.degrees(np.arctan2(r[1, 0], r[0, 0])))
-    out = np.eye(4)
-    out[:3, :3] = yaw_matrix3(yaw_deg)
-    out[:3, 3] = transform[:3, 3]
-    return out
+    return yaw_transform(yaw_of(transform), transform[:3, 3])
 
 
 def _layout_bound_check(seed_shifts_m: dict[str, float], bound_mean_m: float) -> tuple[bool, float]:
@@ -861,15 +842,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
 
         placements: dict[str, Placement] = {}
         for s in data["scans"]:
-            placements[s["name"]] = Placement(
-                name=s["name"],
-                level_rotation=np.array(s.get("level_rotation", np.eye(3).tolist()), dtype=float),
-                floor_z=float(s.get("floor_z_local_m", 0.0)),
-                yaw_deg=float(s["yaw_deg"]), tx=float(s["x_m"]), ty=float(s["y_m"]), tz=float(s["z_m"]),
-                # Keep the root scan's hand-set tilt in root_target.
-                pitch_deg=float(s.get("pitch_deg", 0.0)), roll_deg=float(s.get("roll_deg", 0.0)),
-                locked=bool(s.get("locked", False)),
-            )
+            placements[s["name"]] = Placement.from_dict(s, strict=True)   # hand tilt kept for the root's target
 
         # The exclusion list the bench draws, parsed the same way as load_placements.
         exclusions = [Exclusion.from_dict(e) for e in data.get("exclusions", [])]
@@ -1140,16 +1113,15 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                       "y_m": new_pose.y_m, "z_m": new_pose.z_m}
             # current is what this run started from (the on-disk pose at job start); human is the user's original
             # hand placement, which may be much older and is never changed by an alignment.
-            current = ScanPose(yaw_deg=s["yaw_deg"], x_m=s["x_m"], y_m=s["y_m"], z_m=s["z_m"])
-            human = ScanPose(yaw_deg=s["human_yaw_deg"], x_m=s["human_x_m"],
-                             y_m=s["human_y_m"], z_m=s["human_z_m"])
+            current = ScanPose.from_dict(s, strict=True)
+            human = ScanPose.from_dict(s, strict=True, prefix="human_")
             capped = False
             if name in app.payloads:
                 update["align_moved_m"] = round(pose_shift_m(app.payloads[name], human, new_pose), 4)
-                update["align_moved_deg"] = round(abs((new_pose.yaw_deg - s["human_yaw_deg"] + 180) % 360 - 180), 3)
+                update["align_moved_deg"] = round(yaw_gap_deg(new_pose.yaw_deg, s["human_yaw_deg"]), 3)
                 # Per-scan bound, against the pose this run was seeded from, never the (possibly stale) hand placement.
                 seed_shift_m = round(pose_shift_m(app.payloads[name], current, new_pose), 4)
-                seed_shift_deg = round(abs((new_pose.yaw_deg - s["yaw_deg"] + 180) % 360 - 180), 3)
+                seed_shift_deg = round(yaw_gap_deg(new_pose.yaw_deg, s["yaw_deg"]), 3)
                 seed_shifts_m[name] = seed_shift_m
                 bound_m = cfg.scan_bound_m if cfg.scan_bound_m is not None else cfg.local_only_bound_m
                 bound_deg = cfg.scan_bound_deg if cfg.scan_bound_deg is not None else cfg.local_only_bound_deg
@@ -1165,7 +1137,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                     update = {"yaw_deg": current.yaw_deg, "x_m": current.x_m,
                               "y_m": current.y_m, "z_m": current.z_m,
                               "align_moved_m": round(pose_shift_m(app.payloads[name], human, current), 4),
-                              "align_moved_deg": round(abs((current.yaw_deg - s["human_yaw_deg"] + 180) % 360 - 180), 3)}
+                              "align_moved_deg": round(yaw_gap_deg(current.yaw_deg, s["human_yaw_deg"]), 3)}
                     capped = True
             pose_updates[name] = update
             # residual_tilt_deg is None when the candidate was capped and discarded.
@@ -1188,15 +1160,14 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                 if name not in seed_shifts_m or seed_shifts_m[name] == 0.0:
                     continue  # locked/root/already-capped rows are untouched
                 s = by_name[name]
-                current = ScanPose(yaw_deg=s["yaw_deg"], x_m=s["x_m"], y_m=s["y_m"], z_m=s["z_m"])
-                human = ScanPose(yaw_deg=s["human_yaw_deg"], x_m=s["human_x_m"],
-                                 y_m=s["human_y_m"], z_m=s["human_z_m"])
+                current = ScanPose.from_dict(s, strict=True)
+                human = ScanPose.from_dict(s, strict=True, prefix="human_")
                 pose_updates[name] = {
                     "yaw_deg": current.yaw_deg, "x_m": current.x_m,
                     "y_m": current.y_m, "z_m": current.z_m,
                     "align_moved_m": round(pose_shift_m(app.payloads[name], human, current), 4)
                                      if name in app.payloads else 0.0,
-                    "align_moved_deg": round(abs((current.yaw_deg - s["human_yaw_deg"] + 180) % 360 - 180), 3),
+                    "align_moved_deg": round(yaw_gap_deg(current.yaw_deg, s["human_yaw_deg"]), 3),
                 }
             for row in pose_rows:
                 if row.get("applied") and row["scan"] in seed_shifts_m and seed_shifts_m[row["scan"]] > 0.0:
@@ -1216,10 +1187,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                 anchor_locked: dict[str, bool] = {}
                 for s in data["scans"]:
                     u = pose_updates.get(s["name"], {})
-                    anchor_poses[s["name"]] = ScanPose(
-                        yaw_deg=u.get("yaw_deg", s["yaw_deg"]), x_m=u.get("x_m", s["x_m"]),
-                        y_m=u.get("y_m", s["y_m"]), z_m=u.get("z_m", s["z_m"]),
-                        pitch_deg=float(s.get("pitch_deg", 0.0)), roll_deg=float(s.get("roll_deg", 0.0)))
+                    anchor_poses[s["name"]] = ScanPose.from_dict({**s, **u}, strict=True)
                     anchor_locked[s["name"]] = bool(s.get("locked", False))
                 # max_shift_m=1.0 rather than the 8.0 default: this refines an already-seeded position, and 8.0 allowed
                 # runaway moves. Matches _run_align's job-level default.
@@ -1242,11 +1210,10 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                                       "y_m": round(pose.y_m, 5), "z_m": round(pose.z_m, 5)})
                         s = by_name.get(name)
                         if s is not None and name in app.payloads:
-                            human = ScanPose(yaw_deg=s["human_yaw_deg"], x_m=s["human_x_m"],
-                                             y_m=s["human_y_m"], z_m=s["human_z_m"])
+                            human = ScanPose.from_dict(s, strict=True, prefix="human_")
                             update["align_moved_m"] = round(pose_shift_m(app.payloads[name], human, pose), 4)
                             update["align_moved_deg"] = round(
-                                abs((pose.yaw_deg - s["human_yaw_deg"] + 180) % 360 - 180), 3)
+                                yaw_gap_deg(pose.yaw_deg, s["human_yaw_deg"]), 3)
                     anchor_stage = {"rows": [vars(r) for r in anchor_result.rows],
                                     "skipped_anchors": anchor_result.skipped,
                                     "n_anchors": len(stage2_anchors),
@@ -1261,10 +1228,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
             settle_poses: dict[str, ScanPose] = {}
             for s in data["scans"]:
                 u = pose_updates.get(s["name"], {})
-                settle_poses[s["name"]] = ScanPose(
-                    yaw_deg=u.get("yaw_deg", s["yaw_deg"]), x_m=u.get("x_m", s["x_m"]),
-                    y_m=u.get("y_m", s["y_m"]), z_m=u.get("z_m", s["z_m"]),
-                    pitch_deg=float(s.get("pitch_deg", 0.0)), roll_deg=float(s.get("roll_deg", 0.0)))
+                settle_poses[s["name"]] = ScanPose.from_dict({**s, **u}, strict=True)
             locked_names = {s["name"] for s in data["scans"] if s.get("locked")}
         # Floors and ceilings marked in review.
             floor_marks = {s["name"]: [float(s[k]) for k in ("floor_h_m", "ceiling_h_m") if s.get(k) is not None]
@@ -1575,10 +1539,8 @@ def _run_wall_report(app: "App", job_id: str, params: dict) -> None:
         app.jobs.set_progress(job_id, "checking for bent scans", "")
         bent = _bent_scan_report(scans, loaded.placements, payloads)
         app.jobs.commit(job_id)                     # writing results from here; Cancel waits. #job-process
-        os.makedirs(project_mod.reports_dir(app.out_dir), exist_ok=True)
         path = os.path.join(project_mod.reports_dir(app.out_dir), "wall_thickness.json")
-        with open(path, "w") as fh:
-            json.dump({"summary": summarise_walls(reports), "walls": rows, "bent_scans": bent}, fh, indent=1)
+        write_json_atomic(path, {"summary": summarise_walls(reports), "walls": rows, "bent_scans": bent}, indent=1)
         app.jobs.finish(job_id, {"summary": summarise_walls(reports), "walls": rows[:40], "total_walls": len(rows),
                                  "bent_scans": bent, "path": path})
     except Exception as exc:  # noqa: BLE001
@@ -1648,11 +1610,8 @@ def _render_project_thumbnail(app: "App", out_dir: str) -> bool:
         rgb = np.asarray(payload.get("rgb") or [], dtype=float)
         pose = poses.get(name)
         if pose:
-            yaw = np.radians(float(pose.get("yaw_deg", 0.0)))
-            c, s = np.cos(yaw), np.sin(yaw)
-            rx = xy[:, 0] * c - xy[:, 1] * s + float(pose.get("x_m", 0.0))
-            ry = xy[:, 0] * s + xy[:, 1] * c + float(pose.get("y_m", 0.0))
-            xy = np.column_stack([rx, ry])
+            xy = xy @ yaw_matrix2(float(pose.get("yaw_deg", 0.0))).T + [float(pose.get("x_m", 0.0)),
+                                                                         float(pose.get("y_m", 0.0))]
         pts_all.append(xy)
         rgb_all.append(rgb)
     if not pts_all:

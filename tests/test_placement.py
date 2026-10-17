@@ -13,8 +13,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from open_point_stitch.placement import (  # noqa: E402
     Placement, SCHEMA, save_placements, load_placements,
-    pitch_matrix3, roll_matrix3, yaw_matrix3,
 )
+from open_point_stitch.lib.poses import pitch_matrix3, roll_matrix3, yaw_matrix3  # noqa: E402
 
 
 def test_zero_pitch_roll_matches_old_behaviour():
@@ -116,11 +116,5 @@ def test_an_unknown_schema_is_refused():
 
 
 if __name__ == "__main__":
-    failures = 0
-    for name, fn in sorted(list(globals().items())):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn(); print(f"PASS {name}")
-            except Exception as exc:
-                failures += 1; print(f"FAIL {name}: {exc}")
-    raise SystemExit(1 if failures else 0)
+    from support import run_tests
+    raise SystemExit(run_tests(globals()))

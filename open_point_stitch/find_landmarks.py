@@ -12,6 +12,9 @@ import cv2
 import numpy as np
 import open3d as o3d
 
+from .lib.clouds import as_cloud
+from .lib.poses import fit_yaw_shift_2d, rot2, tilt_of, yaw_gap_deg, yaw_matrix2
+
 log = logging.getLogger(__name__)
 
 
@@ -49,9 +52,7 @@ def _organic_fraction(p3: np.ndarray, k: int = 12, sample_cap: int = 250,
     idx = (np.random.default_rng(0).choice(n, size=sample_cap, replace=False)
            if n > sample_cap else np.arange(n))
     # KDTreeFlann needs a PointCloud; a bare Vector3dVector builds without error but every query fails.
-    cloud = o3d.geometry.PointCloud()
-    cloud.points = o3d.utility.Vector3dVector(p3)
-    tree = o3d.geometry.KDTreeFlann(cloud)
+    tree = o3d.geometry.KDTreeFlann(as_cloud(p3))
     scattered = checked = 0
     for i in idx:
         _, nbr, _ = tree.search_knn_vector_3d(p3[i], k + 1)   # includes the point itself
@@ -131,19 +132,6 @@ def _yaw_of(v: np.ndarray) -> np.ndarray:
     return np.arctan2(v[..., 1], v[..., 0])
 
 
-def _rot(yaw: float) -> np.ndarray:
-    c, s = np.cos(yaw), np.sin(yaw)
-    return np.array([[c, -s], [s, c]])
-
-
-def _fit_yaw_translation(p: np.ndarray, q: np.ndarray) -> tuple[float, np.ndarray]:
-    """Closed-form plan rotation and shift taking points p onto points q."""
-    cp, cq = p.mean(axis=0), q.mean(axis=0)
-    a, b = p - cp, q - cq
-    yaw = float(np.arctan2((a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]).sum(), (a * b).sum()))
-    return yaw, cq - _rot(yaw) @ cp
-
-
 def _compatible(src: list[Landmark], tgt: list[Landmark], base_tol: float, top_tol: float, size_ratio: float,
                 brightness_tol: Optional[float] = None) -> np.ndarray:
     """Which source landmark could be which target landmark: about the same height off the floor, the same size and,
@@ -163,7 +151,7 @@ def _compatible(src: list[Landmark], tgt: list[Landmark], base_tol: float, top_t
 
 def _lineup(p: np.ndarray, q: np.ndarray, compat: np.ndarray, yaw: float, shift: np.ndarray, tol: float):
     """Source landmark i -> target landmark j pairs that land within `tol` of each other under (yaw, shift), one target each."""
-    moved = p @ _rot(yaw).T + shift
+    moved = p @ rot2(yaw).T + shift
     dist = np.linalg.norm(moved[:, None, :] - q[None, :, :], axis=2)
     dist = np.where(compat, dist, np.inf)
     best = dist.argmin(axis=1)
@@ -229,7 +217,7 @@ def match_landmarks(
         for _ in range(2):                                    # refit on what lines up, then look again
             if len(pairs) < 2:
                 break
-            yaw, shift = _fit_yaw_translation(p[[i for i, _ in pairs]], q[[j for _, j in pairs]])
+            yaw, shift = fit_yaw_shift_2d(p[[i for i, _ in pairs]], q[[j for _, j in pairs]])
             pairs = _lineup(p, q, compat, yaw, shift, inlier_tol_m)
         if len(pairs) >= min_pairs:
             scored.append(LandmarkMatch(yaw_deg=float(np.degrees(yaw)), translation=shift, pairs=pairs,
@@ -237,7 +225,7 @@ def match_landmarks(
     scored.sort(key=lambda m: -m.score)
     kept: list[LandmarkMatch] = []
     for m in scored:
-        if all(abs((m.yaw_deg - k.yaw_deg + 180.0) % 360.0 - 180.0) > 3.0 or np.linalg.norm(m.translation - k.translation) > 0.4
+        if all(yaw_gap_deg(m.yaw_deg, k.yaw_deg) > 3.0 or np.linalg.norm(m.translation - k.translation) > 0.4
                for k in kept):
             kept.append(m)
         if len(kept) >= top_k:
@@ -295,7 +283,7 @@ def scan_landmarks(down, level, features=None) -> list[Landmark]:
 def landmark_candidates(src_down, tgt_down, src_features=None, tgt_features=None, top_k: int = 8, **match_kwargs):
     """Starting poses from matched landmarks, as full transforms between the scans' ORIGINAL frames (the same shape
     `wall_candidates` returns), best first, plus each match's lined-up count and both landmark lists for reporting."""
-    from .align_gravity import estimate_level, tilt_of
+    from .align_gravity import estimate_level
     src_level, tgt_level = estimate_level(src_down), estimate_level(tgt_down)
     src_lms = scan_landmarks(src_down, src_level, src_features)
     tgt_lms = scan_landmarks(tgt_down, tgt_level, tgt_features)
@@ -307,7 +295,7 @@ def landmark_candidates(src_down, tgt_down, src_features=None, tgt_features=None
     out = []
     for m in matches:
         levelled = np.eye(4)
-        levelled[:2, :2] = _rot(np.radians(m.yaw_deg))
+        levelled[:2, :2] = yaw_matrix2(m.yaw_deg)
         levelled[:2, 3] = m.translation
         levelled[2, 3] = tgt_level.floor_z - src_level.floor_z          # heights are floor-relative, so the floors coincide
         full = rt_inv @ levelled @ rs

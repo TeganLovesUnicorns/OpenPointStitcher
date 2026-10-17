@@ -7,9 +7,9 @@ import logging
 from typing import Callable, Optional
 
 import numpy as np
-import open3d as o3d
 
 from .config import PipelineConfig
+from .lib.clouds import as_cloud
 from .overlap import direct_overlap
 from .prepare import Prepared, aabb, density_preserving_thin, thin_rng
 from .pts_file import Scan
@@ -101,7 +101,7 @@ def surface_pairs(
     for i, scan in enumerate(scans):
         if placements.get(scan.name) is None:
             continue
-        pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(scan.points))
+        pcd = as_cloud(scan.points)
         keep_idx, _ = density_preserving_thin(
             pcd, cfg.adjacency_surface_thin_points, thin_rng(scan.name),
             bin_m=cfg.voxel_size, floor_n=cfg.search_thin_floor_n,
@@ -143,7 +143,7 @@ def feature_surface_pairs(
             continue
         if progress_cb:
             progress_cb(f"finding walls: {i + 1}/{n}: {scan.name}")
-        pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(scan.points))
+        pcd = as_cloud(scan.points)
         features[i] = extract_scan_features(pcd)
 
     raw_pairs, raw_fractions = surface_pairs(scans, prepared, placements, cfg)

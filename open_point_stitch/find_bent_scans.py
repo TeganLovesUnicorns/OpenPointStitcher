@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .lib.geometry import fold_between
 from .measure_walls import _segments
 from .placement import Placement
 
@@ -61,7 +62,7 @@ def group_walls(segments: list[dict], placements: dict[str, Placement],
         g, rest = [seed], []
         for s in left:
             same_face = s["side"] * (s["n"] @ seed["n"]) * seed["side"] > 0
-            ang = np.degrees(np.arccos(np.clip(abs(s["u"] @ seed["u"]), 0, 1)))
+            ang = fold_between(s["u"], seed["u"])
             off = abs(seed["n"] @ ((s["a"] + s["b"]) / 2 - mid))
             t = sorted([(s["a"] - mid) @ seed["u"], (s["b"] - mid) @ seed["u"]])
             half = seed["length"] / 2

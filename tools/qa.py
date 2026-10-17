@@ -13,12 +13,11 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import qa_layers  # noqa: E402
+from bench_api import call, request, wait_for_http  # noqa: E402
 
 QA_PROJECT_NAME = "qa"
 
@@ -155,42 +154,16 @@ def _last_seconds() -> dict:
         return {}
 
 
-def wait_for_http(url: str, timeout_s: float, label: str) -> float:
-    """Poll a URL until it answers 200. Returns elapsed seconds. Raises on timeout."""
-    t0 = time.time()
-    last_err = None
-    while time.time() - t0 < timeout_s:
-        try:
-            with urllib.request.urlopen(url, timeout=2) as resp:
-                if resp.status == 200:
-                    return time.time() - t0
-        except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
-            last_err = exc
-        time.sleep(0.5)
-    raise TimeoutError(f"{label}: {url} never answered within {timeout_s:.0f}s ({last_err})")
-
-
-def _post_json(url: str, body: dict, timeout: float = 30.0) -> tuple[int, dict]:
-    data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="POST",
-                                 headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, json.loads(resp.read())
-    except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read())
-
-
 def ensure_qa_project(base_url: str, name: str = QA_PROJECT_NAME) -> None:
     """Create (or reopen), import into and open a QA project. Idempotent."""
-    status, body = _post_json(f"{base_url}/api/projects", {"name": name})
+    status, body = request(base_url, "POST", "/api/projects", {"name": name}, timeout=30)
     if status not in (200, 409):
         raise RuntimeError(f"could not create the QA project {name!r}: {status} {body}")
-    status, body = _post_json(f"{base_url}/api/projects/{name}/import", {})
+    status, body = request(base_url, "POST", f"/api/projects/{name}/import", {}, timeout=30)
     if status != 200:
         raise RuntimeError(f"could not import scans into the QA project {name!r}: {status} {body}")
     print(f"QA project {name!r}: imported {body.get('n', 0)} scan(s)")
-    status, body = _post_json(f"{base_url}/api/projects/{name}/open", {})
+    status, body = request(base_url, "POST", f"/api/projects/{name}/open", {}, timeout=30)
     if status != 200:
         raise RuntimeError(f"could not open the QA project {name!r}: {status} {body}")
 
@@ -201,8 +174,7 @@ def wait_for_all_scans_ready(base_url: str, timeout_s: float) -> tuple[float, in
     n = 0
     rows: list = []
     while time.time() - t0 < timeout_s:
-        with urllib.request.urlopen(f"{base_url}/api/scans", timeout=5) as resp:
-            data = json.loads(resp.read())
+        data = call(base_url, "GET", "/api/scans", timeout=5)
         rows = data.get("scans", [])
         n = len(rows)
         if rows and all(r.get("ready") or r.get("error") for r in rows):

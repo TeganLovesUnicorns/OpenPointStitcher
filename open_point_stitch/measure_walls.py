@@ -8,7 +8,10 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from .placement import Placement, tilt_matrix3
+from .lib.geometry import fold_between
+from .lib.groups import connected_groups
+from .lib.poses import tilt_matrix3
+from .placement import Placement
 from .pts_file import Scan
 
 INCH_M = 0.0254
@@ -65,7 +68,7 @@ def _segments(payloads: dict[str, dict], placements: dict[str, Placement]) -> li
 
 
 def _same_wall(s: dict, t: dict) -> bool:
-    if np.degrees(np.arccos(np.clip(abs(s["u"] @ t["u"]), 0.0, 1.0))) > MAX_ANGLE_DEG:
+    if fold_between(s["u"], t["u"]) > MAX_ANGLE_DEG:
         return False
     mid_t, mid_s = (t["a"] + t["b"]) / 2, (s["a"] + s["b"]) / 2
     if abs(s["n"] @ (mid_t - s["a"])) > MAX_OFFSET_M or abs(t["n"] @ (mid_s - t["a"])) > MAX_OFFSET_M:
@@ -76,22 +79,8 @@ def _same_wall(s: dict, t: dict) -> bool:
 
 
 def cluster_walls(segments: list[dict]) -> list[list[dict]]:
-    parent = list(range(len(segments)))
-
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    for i in range(len(segments)):
-        for j in range(i + 1, len(segments)):
-            if find(i) != find(j) and _same_wall(segments[i], segments[j]):
-                parent[find(i)] = find(j)
-    groups: dict[int, list[dict]] = {}
-    for i, seg in enumerate(segments):
-        groups.setdefault(find(i), []).append(seg)
-    return list(groups.values())
+    groups = connected_groups(len(segments), linked=lambda i, j: _same_wall(segments[i], segments[j]))
+    return [[segments[i] for i in g] for g in groups]
 
 
 def _consensus(cluster: list[dict]):

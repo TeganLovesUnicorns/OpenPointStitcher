@@ -12,7 +12,8 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from open_point_stitch.export_plan import default_band, dxf_text, plan_cut, trace_outlines, write_plan  # noqa: E402
-from open_point_stitch.placement import Placement, yaw_matrix2  # noqa: E402
+from open_point_stitch.placement import Placement  # noqa: E402
+from open_point_stitch.lib.poses import yaw_matrix2  # noqa: E402
 from open_point_stitch.pts_file import Scan  # noqa: E402
 
 ROOM = (6.0, 4.0)        # metres, x by y, in the scan's own frame
@@ -157,11 +158,5 @@ def test_specks_are_dropped_and_a_huge_area_coarsens_the_cell_instead_of_running
 
 
 if __name__ == "__main__":
-    failures = 0
-    for name, fn in sorted(list(globals().items())):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn(); print(f"PASS {name}")
-            except Exception as exc:
-                failures += 1; print(f"FAIL {name}: {exc}")
-    raise SystemExit(1 if failures else 0)
+    from support import run_tests
+    raise SystemExit(run_tests(globals()))

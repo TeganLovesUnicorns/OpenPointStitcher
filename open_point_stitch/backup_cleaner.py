@@ -10,6 +10,7 @@ from typing import Callable, Optional
 
 from . import project as project_mod
 from .backup_retention import BackupInfo, dry_run_summary
+from .lib.files import write_json_atomic
 
 PINS_FILE = "pins.json"
 _NAME_IN_TEXT = re.compile(r"placement\.backup-\d{8}T\d{6}\.\d{3}Z(?:-\d+)?\.json")
@@ -34,12 +35,7 @@ def set_pinned(pdir: str, backup_id: str, pinned: bool) -> set[str]:
     """Pin or unpin one saved version; returns every pinned id."""
     pins = read_pins(pdir)
     (pins.add if pinned else pins.discard)(backup_id)
-    folder = project_mod.backups_dir(pdir)
-    os.makedirs(folder, exist_ok=True)
-    tmp = os.path.join(folder, PINS_FILE + ".tmp")
-    with open(tmp, "w") as fh:
-        json.dump({"pinned": sorted(pins)}, fh, indent=1)
-    os.replace(tmp, os.path.join(folder, PINS_FILE))
+    write_json_atomic(os.path.join(project_mod.backups_dir(pdir), PINS_FILE), {"pinned": sorted(pins)}, indent=1)
     return pins
 
 

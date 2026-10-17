@@ -20,9 +20,11 @@ import sys
 import tempfile
 import time
 import urllib.parse
-import urllib.request
 
 from playwright.sync_api import sync_playwright
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
+from bench_api import call  # noqa: E402
 
 BENCH_URL = os.environ.get("BENCH_URL", "http://127.0.0.1:8080")
 # The QA project's folder: every save lands inside the open project. _goto opens it with ?project=. Checks that need
@@ -117,8 +119,7 @@ def _saved_settings(page, timeout_s: float = 20.0, **want) -> dict:
     deadline = time.time() + timeout_s
     while True:
         page.wait_for_timeout(500)
-        with urllib.request.urlopen(f"{BENCH_URL}/api/settings", timeout=10) as r:
-            got = json.loads(r.read())
+        got = call(f"{BENCH_URL}/api/settings", "GET", timeout=10)
         if all(str(got.get(k)) == str(v) for k, v in want.items()) or time.time() > deadline:
             return got
 
@@ -260,8 +261,7 @@ def _show_bottom_tab(page, tab):
 def test_bookmarked_project_url_opens_that_project(page):
     """A ?project=<name> bookmark opens the bench with that project, not a raw JSON error: the server routes on the
     path without its query string. Uses whichever project tools/qa.py opened."""
-    with urllib.request.urlopen(f"{BENCH_URL}/api/projects", timeout=10) as r:
-        active = json.loads(r.read()).get("active")
+    active = call(f"{BENCH_URL}/api/projects", "GET", timeout=10).get("active")
     assert active, "no project is open server-side - nothing real to bookmark against"
 
     errors = []
@@ -842,8 +842,7 @@ def test_cancel_running_job_stops_at_once_keeps_poses_and_looks_live(page):
         t0 = time.time()
         assert page.locator("#jobNotice").inner_text() == "Cancelling...", "no Cancelling banner at once"
         while time.time() - t0 < 30:                # the job API, not the button, says whether it stopped
-            with urllib.request.urlopen(f"{BENCH_URL}/api/jobs/{job_id}", timeout=10) as r:
-                job = json.loads(r.read())
+            job = call(f"{BENCH_URL}/api/jobs/{job_id}", "GET", timeout=10)
             if job["state"] != "running":
                 break
             time.sleep(0.1)
@@ -1054,8 +1053,7 @@ def test_react_clip_sliders_all_visible_and_independent(page):
 
 def test_scan_list_matches_api(page):
     _goto(page)
-    with urllib.request.urlopen(f"{BENCH_URL}/api/scans", timeout=10) as resp:
-        api_scans = json.loads(resp.read())["scans"]
+    api_scans = call(f"{BENCH_URL}/api/scans", "GET", timeout=10)["scans"]
     rows = page.locator("#scanlist .scan")
     n_rows = rows.count()
     assert n_rows == len(api_scans), (
@@ -1129,8 +1127,7 @@ def test_webgl_renderer(page):
 def test_build_info_matches_server(page):
     _goto(page)
     page_info = page.evaluate("() => window.BUILD_INFO")
-    with urllib.request.urlopen(f"{BENCH_URL}/api/version", timeout=10) as resp:
-        server_info = json.loads(resp.read())
+    server_info = call(f"{BENCH_URL}/api/version", "GET", timeout=10)
     assert page_info["build_time"] == server_info["build_time"], (
         f"page build_time {page_info['build_time']!r} != "
         f"server build_time {server_info['build_time']!r}"
@@ -1141,8 +1138,7 @@ def test_gpu_status_matches_reality(page):
     """The Settings GPU checkbox matches what /api/gpu-status reports, whichever way that goes, so the test passes with
     or without a GPU but fails on a disagreement."""
     _goto(page)
-    with urllib.request.urlopen(f"{BENCH_URL}/api/gpu-status", timeout=10) as resp:
-        status = json.loads(resp.read())
+    status = call(f"{BENCH_URL}/api/gpu-status", "GET", timeout=10)
     page.wait_for_function(
         "() => $('gpuStatusNote').textContent !== 'checking GPU status…'",
         timeout=10_000,
@@ -2394,8 +2390,7 @@ def test_clear_links_zero_anchors(page):
     assert page.evaluate("() => anchors.length") == 0, "anchors[] was not cleared client-side"
 
     def server_anchors():
-        with urllib.request.urlopen(f"{BENCH_URL}/api/placement", timeout=10) as resp:
-            return json.loads(resp.read()).get("anchors", [])
+        return call(f"{BENCH_URL}/api/placement", "GET", timeout=10).get("anchors", [])
     # An earlier save can still be landing under load: wait for the clear, then check nothing brings links back.
     deadline = time.time() + 15
     while server_anchors() and time.time() < deadline:
@@ -2700,8 +2695,8 @@ def test_exclusions_and_removals_list_apart_and_the_export_setting_saves_with_it
     try:
         with page.expect_response(lambda r: r.url == settings_url and r.request.method == "POST"):
             box.click()
-        with urllib.request.urlopen(settings_url, timeout=10) as r:
-            assert json.loads(r.read()).get("export_keeps_excluded") is False, "unticking did not reach the project"
+        assert call(settings_url, "GET", timeout=10).get("export_keeps_excluded") is False, (
+            "unticking did not reach the project")
         _goto(page)
         page.locator('.menubtn[data-menu="menuSettings"]').click()
         page.locator('button[role="tab"]:has-text("Exporting")').click()
@@ -2781,8 +2776,7 @@ def test_scan_alias_persists(page):
     page.locator("#bSave").click()
     page.wait_for_function("() => $('out').value.includes('saved to')", timeout=10_000)
 
-    with urllib.request.urlopen(f"{BENCH_URL}/api/placement", timeout=10) as r:
-        saved = json.loads(r.read())
+    saved = call(f"{BENCH_URL}/api/placement", "GET", timeout=10)
     saved_scan = next(s for s in saved["scans"] if s["name"] == real_name)
     assert saved_scan.get("alias") == alias, (
         f"server saved alias={saved_scan.get('alias')!r}, expected {alias!r}"
@@ -2826,8 +2820,7 @@ def test_scan_display_colour_persists_and_stays_out_of_export(page):
     page.locator("#bSave").click()
     page.wait_for_function("() => $('out').value.includes('saved to')", timeout=10_000)
 
-    with urllib.request.urlopen(f"{BENCH_URL}/api/placement", timeout=10) as r:
-        saved = json.loads(r.read())
+    saved = call(f"{BENCH_URL}/api/placement", "GET", timeout=10)
     saved_scan = next(s for s in saved["scans"] if s["name"] == real_name)
     assert saved_scan.get("display_color") == [0x33, 0x99, 0xFF], (
         f"server saved display_color={saved_scan.get('display_color')!r}, expected [51, 153, 255]"
@@ -2880,8 +2873,7 @@ def test_exclude_region_roundtrip(page):
     page.locator("#bSave").click()
     page.wait_for_function("() => $('out').value.includes('saved to')", timeout=10_000)
 
-    with urllib.request.urlopen(f"{BENCH_URL}/api/placement", timeout=10) as r:
-        saved = json.loads(r.read())
+    saved = call(f"{BENCH_URL}/api/placement", "GET", timeout=10)
     saved_exclusions = saved.get("exclusions", [])
     assert len(saved_exclusions) == 1, (
         f"server saved {len(saved_exclusions)} exclusion(s), expected 1: {saved_exclusions}"
@@ -2910,8 +2902,7 @@ def test_exclude_region_roundtrip(page):
     # Save again so the restore reaches the server, and the exclusion does not leak into later tests.
     page.locator("#bSave").click()
     page.wait_for_function("() => $('out').value.includes('saved to')", timeout=10_000)
-    with urllib.request.urlopen(f"{BENCH_URL}/api/placement", timeout=10) as r:
-        saved_after = json.loads(r.read())
+    saved_after = call(f"{BENCH_URL}/api/placement", "GET", timeout=10)
     assert saved_after.get("exclusions", []) == [], (
         "restored exclusion is still on the server after saving"
     )
@@ -3209,8 +3200,7 @@ def _restore_and_rebuild_plain(placement_path: str, original: bytes, name: str) 
     with open(placement_path, "wb") as fh:
         fh.write(original)
     try:
-        req = urllib.request.Request(f"{BENCH_URL}/api/scans/{urllib.parse.quote(name)}/reprocess", method="POST")
-        urllib.request.urlopen(req, timeout=300).read()
+        call(f"{BENCH_URL}/api/scans/{urllib.parse.quote(name)}/reprocess", "POST", timeout=300)
     finally:
         with open(placement_path, "wb") as fh:          # the rebuild records reprocessed_with: [] in the file
             fh.write(original)
@@ -3260,8 +3250,7 @@ def test_reprocess_a_scan_says_what_changed_and_rechecks_only_its_links(page):
         n_scans, seen, total = page.evaluate("() => S.length"), set(), None
         deadline = time.time() + 300
         while time.time() < deadline and len(seen) < 2:
-            with urllib.request.urlopen(f"{BENCH_URL}/api/jobs/{job_id}", timeout=10) as r:
-                job = json.loads(r.read())
+            job = call(f"{BENCH_URL}/api/jobs/{job_id}", "GET", timeout=10)
             assert job["state"] == "running", f"the re-check ended {job['state']}: {job.get('error')}"
             m = re.match(r"(\d+)/(\d+): (.+ <-> .+?)(?:: |$)", (job.get("progress") or {}).get("detail") or "")
             if m:
@@ -4072,9 +4061,7 @@ def test_floors_and_ceilings_show_as_pieces_from_the_view_menu(page):
         assert after > before + 500, f"no pieces drawn ({before} -> {after} inked pixels)"
         t0 = time.time()
         name = page.evaluate("() => S[0].name")
-        with urllib.request.urlopen(f"{BENCH_URL}/api/scans/{urllib.parse.quote(name)}/floors-ceilings",
-                                    timeout=30) as r:
-            again = json.loads(r.read())["pieces"]
+        again = call(f"{BENCH_URL}/api/scans/{urllib.parse.quote(name)}/floors-ceilings", "GET", timeout=30)["pieces"]
         assert again == pieces and time.time() - t0 < 3, "the second ask was not the cached answer"
     finally:
         if page.evaluate("() => $('cbFloorsCeil').checked"):
@@ -4577,8 +4564,7 @@ def test_automatic_align_starts(page):
     assert job_id, f"no job id in the start response: {resp.json()}"
     assert page.locator("#bRunMenu").is_disabled(), "resource controls did not lock while the job runs"
 
-    with urllib.request.urlopen(f"{BENCH_URL}/api/jobs/{job_id}", timeout=10) as r:
-        job = json.loads(r.read())
+    job = call(f"{BENCH_URL}/api/jobs/{job_id}", "GET", timeout=10)
     assert job["state"] == "running", f"job {job_id} was already {job['state']!r}, expected still running"
     print(f"    job {job_id} started and is running (left running in the background, not awaited)")
 

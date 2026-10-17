@@ -12,8 +12,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from open_point_stitch.align_points import solve_yaw_translation  # noqa: E402
-from open_point_stitch.align_gravity import tilt_of, yaw_transform  # noqa: E402
+from open_point_stitch.lib.poses import solve_yaw_translation, tilt_of, yaw_transform  # noqa: E402
 
 
 def _random_yaw_transform(rng):
@@ -115,11 +114,5 @@ def test_negative_weight_rejected():
 
 
 if __name__ == "__main__":
-    failures = 0
-    for name, fn in sorted(list(globals().items())):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn(); print(f"PASS {name}")
-            except Exception as exc:
-                failures += 1; print(f"FAIL {name}: {exc}")
-    raise SystemExit(1 if failures else 0)
+    from support import run_tests
+    raise SystemExit(run_tests(globals()))

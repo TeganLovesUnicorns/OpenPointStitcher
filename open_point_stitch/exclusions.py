@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from .geometry import points_in_box
+from .lib.geometry import points_in_box
 from .placement import Exclusion
 from .pts_file import Scan
 

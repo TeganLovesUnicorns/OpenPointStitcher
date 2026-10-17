@@ -9,6 +9,7 @@ import re
 import shutil
 import time
 
+from open_point_stitch.lib.files import write_json_atomic
 from open_point_stitch.placement import SCHEMA
 
 SCANS_RAW_DIRNAME = "scans-raw"
@@ -72,8 +73,7 @@ def create_project(projects_root: str, name: str) -> str:
     if os.path.exists(pdir):
         raise FileExistsError(f"a project named {sanitize_project_name(name)!r} already exists")
     os.makedirs(scans_raw_dir(pdir))
-    with open(project_file_path(pdir), "w") as fh:
-        json.dump(_DEFAULT_PROJECT_FILE, fh, indent=2)
+    write_json_atomic(project_file_path(pdir), _DEFAULT_PROJECT_FILE, indent=2)
     return pdir
 
 

@@ -14,16 +14,8 @@ def main() -> int:
     spec = importlib.util.spec_from_file_location("part_under_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)                       # the file's own runner sits under __main__ and stays idle
-    names = sorted(name for name, fn in vars(module).items() if name.startswith("test_") and callable(fn))
-    failures = 0
-    for name in names[k::n]:
-        try:
-            getattr(module, name)()
-            print(f"PASS {name}", flush=True)
-        except Exception as exc:  # noqa: BLE001 - one failing test must not stop the rest
-            failures += 1
-            print(f"FAIL {name}: {exc}", flush=True)
-    return 1 if failures else 0
+    from support import run_tests
+    return run_tests(vars(module), part=(k, n))
 
 
 if __name__ == "__main__":

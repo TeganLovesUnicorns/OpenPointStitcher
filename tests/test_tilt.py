@@ -9,9 +9,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from open_point_stitch.align_anchors import ScanPose  # noqa: E402
+from open_point_stitch.lib.poses import ScanPose  # noqa: E402
 from open_point_stitch.align_tilt import robust_plane, suggest_tilt, surface_map  # noqa: E402
-from open_point_stitch.placement import tilt_matrix3  # noqa: E402
+from open_point_stitch.lib.poses import tilt_matrix3  # noqa: E402
 
 CEILING_Z = 4.0
 
@@ -189,11 +189,5 @@ def test_settling_after_a_few_rounds_keeps_a_clean_answer_and_shrinks_later_step
 
 
 if __name__ == "__main__":
-    failures = 0
-    for name, fn in sorted(list(globals().items())):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn(); print(f"PASS {name}")
-            except Exception as exc:
-                failures += 1; print(f"FAIL {name}: {exc}")
-    raise SystemExit(1 if failures else 0)
+    from support import run_tests
+    raise SystemExit(run_tests(globals()))

@@ -18,7 +18,9 @@ import numpy as np
 import open3d as o3d
 
 from .config import PipelineConfig
-from .align_gravity import coarse_candidates, tilt_of, yaw_transform
+from .align_gravity import coarse_candidates
+from .lib.clouds import as_cloud
+from .lib.poses import tilt_of, yaw_of, yaw_transform
 from .find_walls import wall_candidates
 from .find_landmarks import landmark_candidates
 from .prepare import Prepared, aabb, density_preserving_thin, thin_rng
@@ -456,7 +458,7 @@ def achievable_overlap_frac(src_scan, tgt_scan, transform: np.ndarray,
     """Ceiling on fitness for this pair at transform: the fraction of one scan's surface within radius_m of the
     other, full resolution. Thinned the same way as pair_filter.surface_pairs so the two stay comparable."""
     def _thin(scan):
-        pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(scan.points))
+        pcd = as_cloud(scan.points)
         keep_idx, _ = density_preserving_thin(
             pcd, cfg.adjacency_surface_thin_points, thin_rng(scan.name),
             bin_m=cfg.voxel_size, floor_n=cfg.search_thin_floor_n,
@@ -580,8 +582,7 @@ def _pose_delta(seed: np.ndarray, other: np.ndarray) -> tuple[float, float]:
     rotation's plane."""
     rel = other @ np.linalg.inv(seed)
     trans_m = float(np.linalg.norm(rel[:3, 3]))
-    yaw_deg = float(np.degrees(np.arctan2(rel[1, 0], rel[0, 0])))
-    return trans_m, abs(yaw_deg)
+    return trans_m, abs(yaw_of(rel))
 
 
 def _proposal_for(src_name: str, tgt_name: str, cfg: PipelineConfig) -> Optional[np.ndarray]:

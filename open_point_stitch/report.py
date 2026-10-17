@@ -5,7 +5,6 @@ Exists so an alignment that converges but is wrong in space shows up as a row to
 from __future__ import annotations
 
 import csv
-import json
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -15,14 +14,14 @@ import numpy as np
 from .config import PipelineConfig
 from .align_pair import PairResult
 from .align_graph import GlobalResult
+from .lib.files import write_json_atomic
+from .lib.poses import rotation_angle_deg
 
 
 def _pose_summary(pose: np.ndarray) -> dict:
     t = pose[:3, 3]
     r = pose[:3, :3]
-    # Rotation magnitude from the trace, clamped for numerical safety.
-    cos_theta = (np.trace(r) - 1.0) / 2.0
-    theta = float(np.degrees(np.arccos(np.clip(cos_theta, -1.0, 1.0))))
+    theta = rotation_angle_deg(r)
     return {
         "tx_m": round(float(t[0]), 4),
         "ty_m": round(float(t[1]), 4),
@@ -46,8 +45,7 @@ def transform_error_against(
     candidate = transform if source_name == reference_source_name else np.linalg.inv(transform)
     delta = np.linalg.inv(reference_transform) @ candidate
     t_err = float(np.linalg.norm(delta[:3, 3]))
-    cos_theta = (np.trace(delta[:3, :3]) - 1.0) / 2.0
-    r_err = float(np.degrees(np.arccos(np.clip(cos_theta, -1.0, 1.0))))
+    r_err = rotation_angle_deg(delta[:3, :3])
     return t_err, r_err
 
 
@@ -160,9 +158,7 @@ def build_report(
 
 
 def write_report(path: str, report: dict) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with open(path, "w") as fh:
-        json.dump(report, fh, indent=2)
+    write_json_atomic(path, report, indent=2)
 
 
 def print_summary(report: dict) -> None:

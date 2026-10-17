@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import math
 
+from .lib.geometry import fold_between
+
 MATCH_M = 0.15      # a stored wall and a detected one this close (across the wall) ...
 MATCH_DEG = 5.0     # ... and this close in direction, overlapping along it, are the same wall
 
@@ -24,7 +26,7 @@ def find_wall(walls: list[dict], at: list[float]) -> int | None:
     best, best_off = None, MATCH_M
     for k, w in enumerate(walls):
         (wx, wy), (vx, vy), wlen = _line(w)
-        if math.degrees(math.acos(min(1.0, abs(ux * vx + uy * vy)))) > MATCH_DEG:
+        if fold_between((ux, uy), (vx, vy)) > MATCH_DEG:
             continue
         off = abs(-vy * (mid[0] - wx) + vx * (mid[1] - wy))
         t = sorted([(rx - wx) * vx + (ry - wy) * vy, (rx + ux * rlen - wx) * vx + (ry + uy * rlen - wy) * vy])

@@ -14,6 +14,8 @@ import logging
 import os
 import sys
 
+from .lib.files import write_json_atomic
+
 
 def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("folder", help="Folder containing .pts scans")
@@ -187,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "align":
         import numpy as np
         from .align_points import interactive_align, save_seed
-        from .align_gravity import tilt_of
+        from .lib.poses import tilt_of, yaw_of
         from .pts_file import read_pts
 
         def load_one(name):
@@ -251,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
             best = scored[0]
             alignment = ManualAlignment(
                 transform=best[3],
-                yaw_deg=float(np.degrees(np.arctan2(best[3][1, 0], best[3][0, 0]))),
+                yaw_deg=yaw_of(best[3]),
                 residuals=np.zeros(0),
                 n_points=0,
             )
@@ -370,8 +372,7 @@ def main(argv: list[str] | None = None) -> int:
             "output_path": args.output,
             "elapsed_s": round(elapsed, 2),
         }
-        with open(report_path, "w") as fh:
-            json.dump(report, fh, indent=2)
+        write_json_atomic(report_path, report, indent=2)
         print(f"Report: {report_path}")
         return 0
 

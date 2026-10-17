@@ -1292,16 +1292,21 @@ function localCentre3(s){
   const zr=s.zRange||[0,0];
   return [s.cx0, s.cy0, (zr[0]+zr[1])/2];
 }
-// Where that local centre lands in world space under a given pose, composed like Placement.matrix() (yaw, roll,
-// pitch, translate). Used for the pivot marker and ring, and to keep the pivot fixed when an angle changes.
+// A pose as a function of scan-local (x, y, height above floor) to world (x, y, z), composed like Placement.matrix()
+// and the point shader (yaw, roll, pitch, translate). The trig is done once, for loops over every point.
+function poseFn(yaw,pitch,roll,x,y,dz){
+  const cy=Math.cos(yaw), sy=Math.sin(yaw), rc=Math.cos(roll||0), rs=Math.sin(roll||0);
+  const pc=Math.cos(pitch||0), ps=Math.sin(pitch||0);
+  return (lx,ly,h)=>{
+    const rx=lx*cy-ly*sy, ry=lx*sy+ly*cy;
+    const ry2=ry*rc-h*rs, h1=ry*rs+h*rc;
+    return [rx*pc+h1*ps+x, ry2+y, -rx*ps+h1*pc+dz];
+  };
+}
+// Where that local centre lands in world space under a given pose. Used for the pivot marker and ring, and to keep
+// the pivot fixed when an angle changes.
 function worldCentre3(cLocal,yaw,pitch,roll,x,y,dz){
-  const cy=Math.cos(yaw), sy=Math.sin(yaw);
-  const rx=cLocal[0]*cy-cLocal[1]*sy, ry=cLocal[0]*sy+cLocal[1]*cy;
-  const rc=Math.cos(roll), rs=Math.sin(roll);
-  const ry2=ry*rc-cLocal[2]*rs, h1=ry*rs+cLocal[2]*rc;
-  const pc=Math.cos(pitch), ps=Math.sin(pitch);
-  const x2=rx*pc+h1*ps, h2=-rx*ps+h1*pc;
-  return [x2+x, ry2+y, h2+dz];
+  return poseFn(yaw,pitch,roll,x,y,dz)(cLocal[0],cLocal[1],cLocal[2]);
 }
 // Every manual move goes through here (hotkeys, sliders, drags). It also updates the "human" pose and clears any
 // alignment move recorded for the old pose.
@@ -1728,21 +1733,12 @@ function xyAt(s,k){ return [s.xy[k*2], s.xy[k*2+1]]; }
 // Scan-local (x, y, height above floor) to world (x, y, z), using the point shader's tilt maths, so anything drawn
 // with it stays glued to the points.
 function placeLocal3(s,p,cmp){
-  if(cmp===undefined) cmp=compareOriginal();
-  return worldCentre3(p, cmp?s.humanYaw:s.yaw, s.pitch, s.roll, cmp?s.humanX:s.x, cmp?s.humanY:s.y, s.dz);
+  return localToWorldFn(s,cmp)(p[0],p[1],p[2]);
 }
-// placeLocal3's maths with the trig done once per scan, for loops over every point. Anything placed with only
-// place() + dz ignores pitch/roll.
+// placeLocal3 as a function, for loops over every point. Anything placed with only place() + dz ignores pitch/roll.
 function localToWorldFn(s,cmp){
   if(cmp===undefined) cmp=compareOriginal();
-  const yaw=cmp?s.humanYaw:s.yaw, x=cmp?s.humanX:s.x, y=cmp?s.humanY:s.y, dz=s.dz;
-  const cy=Math.cos(yaw), sy=Math.sin(yaw), rc=Math.cos(s.roll||0), rs=Math.sin(s.roll||0);
-  const pc=Math.cos(s.pitch||0), ps=Math.sin(s.pitch||0);
-  return (lx,ly,h)=>{
-    const rx=lx*cy-ly*sy, ry=lx*sy+ly*cy;
-    const ry2=ry*rc-h*rs, h1=ry*rs+h*rc;
-    return [rx*pc+h1*ps+x, ry2+y, -rx*ps+h1*pc+dz];
-  };
+  return poseFn(cmp?s.humanYaw:s.yaw, s.pitch, s.roll, cmp?s.humanX:s.x, cmp?s.humanY:s.y, s.dz);
 }
 // Vertical extent of the points lying along a detected wall's plan line (2nd to 98th percentile,
 // so one leaning chair does not stretch it). Cached on the wall until the points are replaced.
@@ -4718,14 +4714,37 @@ setInterval(async()=>{
   lastPolledPlacementJSON=now;
   if(!dirty || !settled || jobRunning || autosaveInFlight) return;
   autosaveInFlight=true;
-  try{
-    const r=await fetch('/api/placement',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(buildPlacementPayload())});
-    if(r.ok) markPlacementSaved();
-  }catch(e){ /* offline tick - the next one tries again; the leave-warning still covers the gap */ }
+  try{ await savePlacement(); }
+  catch(e){ /* offline tick or refused - the next one tries again; the leave-warning still covers the gap */ }
   autosaveInFlight=false;
 }, 2000);
 
+// One request to the bench; resolves to the parsed reply. A failed status throws with the server's own error text.
+async function api(path,body,method){
+  const opts=body===undefined?{method:method||'GET'}
+    :{method:method||'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
+  const r=await fetch(path,opts);
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error||r.statusText);
+  return j;
+}
+async function savePlacement(){
+  await api('/api/placement',buildPlacementPayload());
+  markPlacementSaved();
+}
+// A job started from the page: save first (the server works from the saved placement), start it and log its
+// progress. Resolves to the finished job, or null when it was cancelled (already reported).
+async function saveAndRunJob(params,startLine){
+  await savePlacement();
+  if(startLine) appendStatus(startLine);
+  const started=await api('/api/jobs',params);
+  currentJobId=started.id;                  // #bCancelJob's onclick reads this
+  $('bCancelJob').disabled=false;           // every job kind checks for Cancel between units of work
+  const job=await pollJob(started.id,p=>appendStatus(`  ${p.phase}: ${p.detail}`));
+  if(job.state==='cancelled'){ $('bCancelJob').disabled=true; reportCancelled(job); return null; }
+  if(job.state==='error') throw new Error(job.error);
+  return job;
+}
 async function pollJob(id,onProgress){
   while(true){
     const r=await fetch('/api/jobs/'+id);
@@ -4949,30 +4968,10 @@ function runAlignLinks(){
   setStatus('saving current placement before aligning...');
   const before=snapshotPoses();
   try{
-    let r=await fetch('/api/placement',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(buildPlacementPayload())});
-    if(!r.ok) throw new Error((await r.json()).error||r.statusText);
-    markPlacementSaved();
-
-    appendStatus('starting align...');
     // reference_scan: the top-of-list scan, for a future pose-graph solve; align_from_anchors ignores it today.
-    r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({kind:'align', threads:+$('threads').value,
-                           gpu:$('cbGpu').checked,
-                           reference_scan:S[drawOrder[0]].name})});
-    const started=await r.json();
-    if(!r.ok) throw new Error(started.error||r.statusText);
-    currentJobId=started.id; // #bCancelJob's onclick reads this
-    $('bCancelJob').disabled=false;  // checked between links
-
-    const job=await pollJob(started.id,p=>appendStatus(`  ${p.phase}: ${p.detail}`));
-    if(job.state==='cancelled'){
-      $('bCancelJob').disabled=true;
-      reportCancelled(job);
-      return;
-    }
-    if(job.state==='error') throw new Error(job.error);
+    const job=await saveAndRunJob({kind:'align', threads:+$('threads').value, gpu:$('cbGpu').checked,
+                                   reference_scan:S[drawOrder[0]].name}, 'starting align...');
+    if(!job) return;
 
     const placed=await (await fetch('/api/placement')).json();
     pushUndo();
@@ -5036,21 +5035,7 @@ function runAlignAuto(seeded,useAnchors,focusScan){       // focusScan: only tha
   showConnectNudge([]);
   const before=snapshotPoses();
   try{
-    let r=await fetch('/api/placement',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(buildPlacementPayload())});
-    if(!r.ok) throw new Error((await r.json()).error||r.statusText);
-    markPlacementSaved();
-
-    appendStatus(focusScan
-      ? `re-checking the links of ${displayName(S.find(x=>x.name===focusScan)||{name:focusScan})} only: every other scan stays where it is...`
-      : useAnchors
-      ? 'starting a run from your alignment, using your links too (refining near your placement, then applying your links as a second pass - this can take a while)...'
-      : seeded
-      ? 'starting a run from your alignment (refining near your placement only, never further than the bound - this can take a while)...'
-      : 'starting automatic align (ignoring links, solving from geometry - this can take a while)...');
-    r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({kind:'align_auto', threads:+$('threads').value,
+    const job=await saveAndRunJob({kind:'align_auto', threads:+$('threads').value,
                            concurrency:+$('conc').value,
                            gpu:$('cbGpu').checked,
                            seed_from_placement:!!seeded,
@@ -5063,20 +5048,15 @@ function runAlignAuto(seeded,useAnchors,focusScan){       // focusScan: only tha
                            settle_on_pieces:$('cbSettlePieces').checked,
                            thickness_trust:$('cbThicknessTrust').checked,
                            // '' (Off) omits the key so the server uses its own default
-                           ...($('searchVoxel').value?{search_voxel_size:+$('searchVoxel').value}:{})})});
-    const started=await r.json();
-    if(!r.ok) throw new Error(started.error||r.statusText);
-    currentJobId=started.id;
-    // Every job kind checks should_cancel between units of work.
-    $('bCancelJob').disabled=false;
-
-    const job=await pollJob(started.id,p=>appendStatus(`  ${p.phase}: ${p.detail}`));
-    if(job.state==='cancelled'){
-      $('bCancelJob').disabled=true;
-      reportCancelled(job);
-      return;
-    }
-    if(job.state==='error') throw new Error(job.error);
+                           ...($('searchVoxel').value?{search_voxel_size:+$('searchVoxel').value}:{})},
+      focusScan
+      ? `re-checking the links of ${displayName(S.find(x=>x.name===focusScan)||{name:focusScan})} only: every other scan stays where it is...`
+      : useAnchors
+      ? 'starting a run from your alignment, using your links too (refining near your placement, then applying your links as a second pass - this can take a while)...'
+      : seeded
+      ? 'starting a run from your alignment (refining near your placement only, never further than the bound - this can take a while)...'
+      : 'starting automatic align (ignoring links, solving from geometry - this can take a while)...');
+    if(!job) return;
     if(job.result.no_link_held){           // a re-check where no link held: nothing moved
       const sc=S.find(x=>x.name===job.result.no_link_held);
       applyAlignAutoResultToLinks(job.result.pairs); renderAll();
@@ -5174,15 +5154,8 @@ $('cbHeatmap').onchange=async()=>{
   if(!cb.checked){ invalidateHeatmap(); draw(); return; }
   setStatus('saving current placement before computing the deviation heatmap...');
   try{
-    let r=await fetch('/api/placement',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(buildPlacementPayload())});
-    if(!r.ok) throw new Error((await r.json()).error||r.statusText);
-    markPlacementSaved();
-
-    r=await fetch('/api/deviation');
-    const j=await r.json();
-    if(!r.ok) throw new Error(j.error||r.statusText);
+    await savePlacement();
+    const j=await api('/api/deviation');
     if(!j.ready){
       setStatus('heatmap not available: '+(j.reason||'unknown reason'));
       cb.checked=false;
@@ -5218,29 +5191,10 @@ function runExport(){
   return lockResourcesFor((async()=>{
   setStatus('saving current placement before exporting...');
   try{
-    let r=await fetch('/api/placement',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(buildPlacementPayload())});
-    if(!r.ok) throw new Error((await r.json()).error||r.statusText);
-    markPlacementSaved();
-
-    appendStatus('starting export (full resolution, this can take a while)...');
-    r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({kind:'export', threads:+$('threads').value,
-                           gpu:$('cbGpu').checked,
-                           remove_strays:!!$('strayRemoval').value, stray_std_ratio:+$('strayRemoval').value||2.0})});
-    const started=await r.json();
-    if(!r.ok) throw new Error(started.error||r.statusText);
-    currentJobId=started.id; // #bCancelJob's onclick reads this
-    $('bCancelJob').disabled=false;  // checked between scan loads and refine links
-
-    const job=await pollJob(started.id,p=>appendStatus(`  ${p.phase}: ${p.detail}`));
-    if(job.state==='cancelled'){
-      $('bCancelJob').disabled=true;
-      reportCancelled(job);
-      return;
-    }
-    if(job.state==='error') throw new Error(job.error);
+    const job=await saveAndRunJob({kind:'export', threads:+$('threads').value, gpu:$('cbGpu').checked,
+                                   remove_strays:!!$('strayRemoval').value, stray_std_ratio:+$('strayRemoval').value||2.0},
+                                  'starting export (full resolution, this can take a while)...');
+    if(!job) return;
 
     appendStatus(`EXPORTED: ${job.result.points.toLocaleString()} points -> ${job.result.output_path}`);
     if(job.result.skipped_no_placement.length)
@@ -5255,22 +5209,9 @@ function runWallReport(){
   return lockResourcesFor((async()=>{
   setStatus('saving current placement before measuring the walls...');
   try{
-    let r=await fetch('/api/placement',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(buildPlacementPayload())});
-    if(!r.ok) throw new Error((await r.json()).error||r.statusText);
-    markPlacementSaved();
-    appendStatus('measuring how thick each wall reads, using every point of every scan...');
-    r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'wall_report',threads:+$('threads').value})});
-    const started=await r.json();
-    if(!r.ok) throw new Error(started.error||r.statusText);
-    currentJobId=started.id;
-    $('bCancelJob').disabled=false;  // checked between scans and wall clusters
-    const job=await pollJob(started.id,p=>appendStatus(`  ${p.phase}: ${p.detail}`));
-    if(job.state==='cancelled'){
-      $('bCancelJob').disabled=true;
-      reportCancelled(job);
-      return;
-    }
-    if(job.state==='error') throw new Error(job.error);
+    const job=await saveAndRunJob({kind:'wall_report', threads:+$('threads').value},
+                                  'measuring how thick each wall reads, using every point of every scan...');
+    if(!job) return;
     const j=job.result, s=j.summary;
     if(!s.walls){ appendStatus('no wall was found by two or more scans, so there is nothing to measure.'); return; }
     appendStatus(`WALL THICKNESS: ${s.walls} walls; a typical one reads ${s.median_in} in thick, the worst tenth ${s.p90_in} in or more. `+
@@ -5293,29 +5234,15 @@ function runExportPlan(){
   return lockResourcesFor((async()=>{
   setStatus('saving current placement before exporting the plan view...');
   try{
-    let r=await fetch('/api/placement',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(buildPlacementPayload())});
-    if(!r.ok) throw new Error((await r.json()).error||r.statusText);
-    markPlacementSaved();
     const params={kind:'export_plan', threads:+$('threads').value};
     if(clipAxisActive('z')){ params.z_lo=clip.z.lo/100; params.z_hi=clip.z.hi/100; }
     const crop={};
     for(const ax of ['x','y']) if(clipAxisActive(ax)){ crop[ax+'_lo']=clip[ax].lo/100; crop[ax+'_hi']=clip[ax].hi/100; }
     if(Object.keys(crop).length) params.crop=crop;
-    appendStatus(clipAxisActive('z')?`cutting between ${params.z_lo.toFixed(2)} and ${params.z_hi.toFixed(2)} m (your Z clip)...`
-                                    :'cutting 1.0 to 1.6 m above the typical floor (turn the Z clip on to choose the height)...');
-    r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)});
-    const started=await r.json();
-    if(!r.ok) throw new Error(started.error||r.statusText);
-    currentJobId=started.id;
-    $('bCancelJob').disabled=false;  // checked between scans
-    const job=await pollJob(started.id,p=>appendStatus(`  ${p.phase}: ${p.detail}`));
-    if(job.state==='cancelled'){
-      $('bCancelJob').disabled=true;
-      reportCancelled(job);
-      return;
-    }
-    if(job.state==='error') throw new Error(job.error);
+    const job=await saveAndRunJob(params, clipAxisActive('z')
+      ?`cutting between ${params.z_lo.toFixed(2)} and ${params.z_hi.toFixed(2)} m (your Z clip)...`
+      :'cutting 1.0 to 1.6 m above the typical floor (turn the Z clip on to choose the height)...');
+    if(!job) return;
     const j=job.result;
     appendStatus(`PLAN VIEW EXPORTED: ${j.outlines} outlines from ${j.points_in_cut.toLocaleString()} points, cut ${j.z_lo} to ${j.z_hi} m, units metres`);
     appendStatus(`  drawing: ${j.dxf_path}`);
@@ -5329,19 +5256,8 @@ function runExport3d(){
   return lockResourcesFor((async()=>{
   setStatus('saving current placement before exporting floors, ceilings and walls in 3D...');
   try{
-    let r=await fetch('/api/placement',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(buildPlacementPayload())});
-    if(!r.ok) throw new Error((await r.json()).error||r.statusText);
-    markPlacementSaved();
-    r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({kind:'export_3d', threads:+$('threads').value})});
-    const started=await r.json();
-    if(!r.ok) throw new Error(started.error||r.statusText);
-    currentJobId=started.id;
-    $('bCancelJob').disabled=false;
-    const job=await pollJob(started.id,p=>appendStatus(`  ${p.phase}: ${p.detail}`));
-    if(job.state==='cancelled'){ $('bCancelJob').disabled=true; reportCancelled(job); return; }
-    if(job.state==='error') throw new Error(job.error);
+    const job=await saveAndRunJob({kind:'export_3d', threads:+$('threads').value});
+    if(!job) return;
     const j=job.result;
     appendStatus(`3D EXPORTED: ${j.n_floor} floor(s), ${j.n_ceiling} ceiling piece(s) (${j.n_sloped} sloped), `+
       `${j.n_surface} counter or table top(s), ${j.n_wall} wall(s), from ${j.scans_used} scans, units metres`);

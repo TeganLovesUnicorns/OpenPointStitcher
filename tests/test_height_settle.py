@@ -8,7 +8,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from open_point_stitch.align_anchors import ScanPose  # noqa: E402
+from open_point_stitch.lib.poses import ScanPose  # noqa: E402
 from open_point_stitch.height_settle import settle, solve  # noqa: E402
 
 
@@ -91,11 +91,5 @@ def test_with_found_pieces_a_table_is_not_a_floor_but_a_second_floor_level_is():
 
 
 if __name__ == "__main__":
-    failures = 0
-    for name, fn in sorted(list(globals().items())):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn(); print(f"PASS {name}")
-            except Exception as exc:
-                failures += 1; print(f"FAIL {name}: {exc}")
-    raise SystemExit(1 if failures else 0)
+    from support import run_tests
+    raise SystemExit(run_tests(globals()))

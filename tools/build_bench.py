@@ -20,6 +20,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 from open_point_stitch import __version__
+from open_point_stitch.lib.files import write_json_atomic
 from open_point_stitch.pts_file import read_pts, find_scans
 from open_point_stitch.exclusions import excluded_mask, filter_scan
 from open_point_stitch import align_gravity
@@ -166,11 +167,7 @@ def build_scan_payload_cached(path: str, cache_dir: str, exclusions=None, stairs
         return cached, True
     key, cpath = _cache_key_and_path(path, cache_dir, exclusions, stairs, options)
     payload = build_scan_payload(path, exclusions=exclusions, stairs=stairs, options=options)
-    os.makedirs(os.path.dirname(cpath), exist_ok=True)
-    tmp = cpath + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump({"_cache_key": key, "payload": payload}, fh)
-    os.replace(tmp, cpath)  # atomic on both POSIX and Windows, no half-written cache file
+    write_json_atomic(cpath, {"_cache_key": key, "payload": payload})
     return payload, False
 
 
