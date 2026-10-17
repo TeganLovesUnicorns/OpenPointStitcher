@@ -3175,12 +3175,12 @@ def test_walls_move_delete_and_add_in_review_and_the_server_applies_the_same(pag
         detected, saved_edits = page.evaluate("(i) => [S[i].walls, S[i].wall_edits]", scan_i)
         assert len(saved_edits) == 7, f"seven edits (three of them ticks) should survive the reload: {saved_edits}"
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-        from open_point_stitch.wall_edits import apply_wall_edits
+        from open_point_stitch.wall_checks import apply_wall_edits
         server, missed = apply_wall_edits(detected, saved_edits)
         server = [[w["x1"], w["y1"], w["x2"], w["y2"], w.get("source", ""), ",".join(w.get("contains", []))] for w in server]
         assert missed == 0 and len(server) == len(shown) and all(
             a[4:] == b[4:] and max(abs(x - y) for x, y in zip(a[:4], b[:4])) < 1e-6 for a, b in zip(server, shown)), (server, shown)
-        from open_point_stitch.wall_edits import frozen                 # 0.29.0: edits frozen when the wall finder changes
+        from open_point_stitch.wall_checks import frozen                 # 0.29.0: edits frozen when the wall finder changes
         kept = frozen(detected, saved_edits, "test")
         page_kept = page.evaluate("(e) => applyWallEdits([{i: 0, x1: 0, y1: 0, x2: 1, y2: 0}], e)"
                                   ".map(w => [w.x1, w.y1, w.x2, w.y2, w.source || '', (w.contains || []).join()])", kept)

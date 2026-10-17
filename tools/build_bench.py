@@ -26,8 +26,8 @@ from open_point_stitch.exclusions import excluded_mask, filter_scan
 from open_point_stitch import align_gravity
 from open_point_stitch.align_gravity import estimate_level
 from open_point_stitch.footprint import footprint
-from open_point_stitch.find_drawn_walls import drawn_walls, plane_rows, segment_row
-from open_point_stitch.find_wall_runs import wall_runs
+from open_point_stitch.find_walls import drawn_walls, plane_rows, segment_row
+from open_point_stitch.find_walls import wall_runs
 from open_point_stitch.prepare import density_preserving_thin, thin_rng
 
 log = logging.getLogger(__name__)
@@ -296,7 +296,7 @@ def build_scan_payload(path: str, preview_max_points: int = PREVIEW_MAX_POINTS, 
         # Local-flatness score, same length and order as xy/h/rgb; align.py weights ICP by it.
         "agreement": [round(float(v), 4) for v in agreement],
         "walls": wall_rows,
-        "planes": planes,       # what the wall reports measure with (find_drawn_walls.plane_rows). #drawn-walls
+        "planes": planes,       # what the wall reports measure with (find_walls.plane_rows)
         "bands": bands,
         "outline": outline,
         "bbox": bbox,

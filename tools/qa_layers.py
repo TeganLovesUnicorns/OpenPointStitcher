@@ -15,16 +15,16 @@ QUICK = [
     "tests/test_corners.py", "tests/test_colour.py", "tests/test_score_vote.py", "tests/test_pair_filter.py",
     "tests/test_report.py", "tests/test_tilt.py", "tests/test_prepare_offload.py", "tests/test_build_bench_offload.py",
     "tests/test_align_graph_4dof.py", "tests/test_align_graph.py", "tests/test_plan_export.py", "tests/test_jobs.py",
-    "tests/test_measure_walls.py", "tests/test_find_walls.py", "tests/test_merge_placed.py", "tests/test_settings.py",
+    "tests/test_wall_checks.py", "tests/test_find_walls.py", "tests/test_merge_placed.py", "tests/test_settings.py",
     "tests/test_find_openings.py", "tests/test_adaptive_voxel.py", "tests/test_find_landmarks.py",
     "tests/test_find_elevations.py", "tests/test_offline_export.py", "tests/test_gpu_icp.py", "tests/test_check_docs.py",
     "tests/test_backup_retention.py", "tests/test_backup_cleaner.py", "tests/test_layout_error.py",
     "tests/test_height_settle.py", "tests/test_explain_moves.py", "tests/test_measure_noise.py",
-    "tests/test_hand_moves.py", "tests/test_find_true_walls.py", "tests/test_find_bent_scans.py",
-    "tests/test_unix_line_endings.py", "tests/test_bug_library.py", "tests/test_wall_edits.py",
+    "tests/test_hand_moves.py",
+    "tests/test_unix_line_endings.py", "tests/test_bug_library.py",
     "tests/test_reprocess.py", "tests/test_job_process.py", "tests/test_floors_ceilings.py",
     "tests/test_export_3d.py", "tests/test_named_landmarks.py",
-    "tests/test_score_walls.py", "tests/test_drawn_walls.py", "tests/test_export_job.py", "tests/test_no_undefined_names.py",
+    "tests/test_score_walls.py", "tests/test_export_job.py", "tests/test_no_undefined_names.py",
 ]
 # Quick files that share something and so keep a lane of their own, never side by side with each other.
 OWN_LANE = {"tests/test_gpu_icp.py": "the graphics card"}

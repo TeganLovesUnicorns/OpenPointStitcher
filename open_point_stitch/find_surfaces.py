@@ -15,7 +15,7 @@ import open3d as o3d
 
 from .lib import geometry
 from .footprint import footprint
-from .find_true_walls import find_true_wall
+from .find_walls import find_true_wall
 from .find_walls import fit_plane
 
 log = logging.getLogger(__name__)

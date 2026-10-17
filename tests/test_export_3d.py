@@ -10,7 +10,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from open_point_stitch.export_3d import dxf_text, scan_surfaces, venue_surfaces  # noqa: E402
-from open_point_stitch.find_wall_runs import drop_crossing, wall_runs  # noqa: E402
+from open_point_stitch.find_walls import drop_crossing, wall_runs  # noqa: E402
 from open_point_stitch.placement import Placement  # noqa: E402
 
 

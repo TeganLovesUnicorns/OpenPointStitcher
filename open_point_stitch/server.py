@@ -48,7 +48,7 @@ from open_point_stitch.lib.files import write_json_atomic
 from open_point_stitch.lib.poses import (ScanPose, pose_shift_m, rotation_angle_deg, tilt_of, world_cloud_points_as_drawn,
                                         yaw_gap_deg, yaw_matrix2, yaw_of, yaw_transform)
 from open_point_stitch.export_plan import default_band, footprints_from_payloads, plan_cut, write_plan
-from open_point_stitch.measure_walls import measure_walls, summarise as summarise_walls
+from open_point_stitch.wall_checks import measure_walls, summarise as summarise_walls
 from open_point_stitch.exclusions import filter_scans, for_export
 from open_point_stitch.align_points import seed_key
 from open_point_stitch.pair_filter import candidate_pairs
@@ -63,10 +63,9 @@ from open_point_stitch import project as project_mod
 from open_point_stitch import backup_cleaner
 from open_point_stitch import height_settle
 from open_point_stitch import floors_ceilings_cache
-from open_point_stitch import export_3d, find_wall_runs, landmark_boxes
+from open_point_stitch import export_3d, find_walls, landmark_boxes
 from open_point_stitch import explain_moves
-from open_point_stitch import find_bent_scans
-from open_point_stitch import wall_edits
+from open_point_stitch import wall_checks
 from open_point_stitch import job_process
 from open_point_stitch import measure_noise
 from open_point_stitch import hand_moves
@@ -708,7 +707,7 @@ def _reprocessed_exclusions(saved: dict, name: str, key: str = "exclusions") -> 
 
 
 def _freeze_wall_edits(out_dir: str, saved: dict, paths: dict, cache_dir: str) -> dict:
-    """Freeze hand wall edits made on an older wall finder's walls (wall_edits.frozen) before the preview is rebuilt,
+    """Freeze hand wall edits made on an older wall finder's walls (wall_checks.frozen) before the preview is rebuilt,
     so the user's walls come back exactly. Returns the placement as written, or saved unchanged."""
     frozen = {}
     for s in saved.get("scans", []):
@@ -724,7 +723,7 @@ def _freeze_wall_edits(out_dir: str, saved: dict, paths: dict, cache_dir: str) -
             continue
         if cached.get("_cache_key", {}).get("version", 0) >= build_bench.WALL_FINDER_SINCE:
             continue
-        frozen[s["name"]] = (edits, wall_edits.frozen(cached["payload"].get("walls", []), edits,
+        frozen[s["name"]] = (edits, wall_checks.frozen(cached["payload"].get("walls", []), edits,
                                                       f"wall finder changed in {__version__}"))
     if not frozen:
         return saved
@@ -740,8 +739,8 @@ def _freeze_wall_edits(out_dir: str, saved: dict, paths: dict, cache_dir: str) -
 def _describe_reprocess(before: dict, after: dict) -> dict:
     """What re-processing changed, as numbers and as plain sentences."""
     b_walls, a_walls = before.get("walls", []), after.get("walls", [])
-    gone = [w for w in b_walls if wall_edits.find_wall(a_walls, [w["x1"], w["y1"], w["x2"], w["y2"]]) is None]
-    new = [w for w in a_walls if wall_edits.find_wall(b_walls, [w["x1"], w["y1"], w["x2"], w["y2"]]) is None]
+    gone = [w for w in b_walls if wall_checks.find_wall(a_walls, [w["x1"], w["y1"], w["x2"], w["y2"]]) is None]
+    new = [w for w in a_walls if wall_checks.find_wall(b_walls, [w["x1"], w["y1"], w["x2"], w["y2"]]) is None]
     out = {"points_before": before.get("points"), "points_after": after.get("points"),
            "walls_before": len(b_walls), "walls_after": len(a_walls), "walls_gone": len(gone), "walls_new": len(new),
            "floor_moved_cm": round((after.get("floor_z", 0.0) - before.get("floor_z", 0.0)) * 100, 1),
@@ -793,8 +792,8 @@ def _bent_scan_report(scans: list, placements: dict[str, Placement], payloads: d
                 m = p.matrix()
                 world[s.name] = (s.points @ m[:3, :3].T + m[:3, 3]).astype(np.float32)
         info: dict = {}
-        verdicts = find_bent_scans.find_bent_scans(world, placements, payloads, info=info)
-        return find_bent_scans.as_report(verdicts, info)
+        verdicts = wall_checks.find_bent_scans(world, placements, payloads, info=info)
+        return wall_checks.as_report(verdicts, info)
     except Exception as exc:  # noqa: BLE001 - a report section must not cost the user their run
         log.exception("bent-scan check failed")
         return {"checked": 0, "flags": [], "error": f"{type(exc).__name__}: {exc}"}
@@ -1305,7 +1304,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
         marks.append(("explaining moves", time.time()))
         app.jobs.set_progress(job_id, "checking for bent scans", "")
         with app._lock:
-            payloads_now = wall_edits.with_wall_edits(dict(app.payloads), wall_edits.edits_by_scan(data))
+            payloads_now = wall_checks.with_wall_edits(dict(app.payloads), wall_checks.edits_by_scan(data))
         bent_report = _bent_scan_report(scans, _final_placements(placements, pose_updates), payloads_now)
         marks.append(("bent-scan check", time.time()))
         app.jobs.commit(job_id)                     # writing results from here; Cancel waits. #job-process
@@ -1483,7 +1482,7 @@ def _run_export_3d(app: "App", job_id: str, params: dict) -> None:
             data = json.load(fh)
         app.wait_for_all()
         with app._lock:
-            payloads = wall_edits.with_wall_edits(dict(app.payloads), wall_edits.edits_by_scan(data))
+            payloads = wall_checks.with_wall_edits(dict(app.payloads), wall_checks.edits_by_scan(data))
         names = [n for n in loaded.placements if n in payloads]
         pieces = floors_ceilings_cache.pieces_for_scans(
             app.scans_dir, os.path.join(app.out_dir, build_bench.CACHE_DIRNAME), payloads, data, names,
@@ -1495,7 +1494,7 @@ def _run_export_3d(app: "App", job_id: str, params: dict) -> None:
             app.jobs.set_progress(job_id, "finding where each wall starts and stops", f"{i + 1}/{len(names)}: {n}")
             pts = floors_ceilings_cache.levelled_scan(paths[n], payloads[n]["level_rotation"], payloads[n]["floor_z"],
                                                       floors_ceilings_cache.scan_exclusions(data, n))
-            walls[n] = find_wall_runs.wall_runs(pts, payloads[n].get("walls", []))
+            walls[n] = find_walls.wall_runs(pts, payloads[n].get("walls", []))
         app.jobs.set_progress(job_id, "joining what several scans saw", "")
         per_scan = {n: export_3d.scan_surfaces(n, pieces.get(n, []), walls[n], loaded.placements[n]) for n in names}
         surfaces = export_3d.venue_surfaces(per_scan)
@@ -1522,9 +1521,9 @@ def _run_wall_report(app: "App", job_id: str, params: dict) -> None:
         app.wait_for_all()
         scans = load_folder(app.scans_dir)
         with open(placement_path) as fh:
-            hand_walls = wall_edits.edits_by_scan(json.load(fh))
+            hand_walls = wall_checks.edits_by_scan(json.load(fh))
         with app._lock:
-            payloads = wall_edits.with_wall_edits(dict(app.payloads), hand_walls)
+            payloads = wall_checks.with_wall_edits(dict(app.payloads), hand_walls)
         threads = params.get("threads")
         try:
             with (limits.limited_to(int(threads)) if threads else _null_ctx()):
