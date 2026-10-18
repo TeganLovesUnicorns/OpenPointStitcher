@@ -555,7 +555,7 @@ def test_seed_summary_shown_up_front_and_persists_on_reload(page):
         assert "91" in text, f"#seedSummary does not carry the pair counts: {text!r}"
         assert "0 skipped" in text, f"#seedSummary does not say 0 skipped: {text!r}"
         assert "not a sign your placement did not save" in text, (
-            f"#seedSummary does not reassure the exact misreading notes\\53 reports: {text!r}"
+            f"#seedSummary does not reassure the misreading it exists to prevent: {text!r}"
         )
         print(f"    #seedSummary after reload: {text!r}")
     finally:
@@ -1809,7 +1809,7 @@ def test_a_and_s_cycle_scan_list_not_wasd_move(page):
     page.keyboard.press("d")
     after = _pose(page, scan_i)
     assert after == before, (
-        f"W/D moved the scan ({before} -> {after}) - they must be fully unbound per notes\\27 item 1"
+        f"W/D moved the scan ({before} -> {after}) - they must be fully unbound"
     )
     print(f"    s: {start_i}->{after_s}, a: {after_s}->{after_a} (back to start), w/d confirmed no-ops")
 
@@ -4524,7 +4524,7 @@ def test_height_settle_setting_is_on_by_default_and_reaches_the_run(page):
     page.locator('.menubtn[data-menu="menuSettings"]').click()
     page.locator('button[role="tab"]:has-text("Aligning")').click()
     assert page.locator("#cbHeightSettle").is_checked(), "height settle should be on by default"
-    assert page.locator("#cbThicknessTrust").is_checked(), "thickness trust should be on by default (runs\\111)"
+    assert page.locator("#cbThicknessTrust").is_checked(), "thickness trust should be on by default"
     page.locator("#cbHeightSettle").uncheck()
     try:
         assert saved_settings(height_settle=False).get("height_settle") is False, "unticking did not reach the server"
@@ -4884,9 +4884,7 @@ def _run_isolated_test(name: str) -> tuple[bool, str]:
     except subprocess.TimeoutExpired as exc:
         out = (exc.stdout or "") + (exc.stderr or "")
         return False, (
-            out + f"\ntimed out after {ISOLATED_TIMEOUT_S}s in its own isolated browser "
-            f"process (notes\\52/54 W8) - contained to this one test, the shared "
-            f"browser serving the rest of the suite was never touched"
+            out + f"\ntimed out after {ISOLATED_TIMEOUT_S}s in its own browser process"
         )
 
 
@@ -4946,7 +4944,7 @@ def main() -> int:
                     failures += 1
                     timed_out = True
                     print(f"FAIL {fn.__name__}: timed out after {this_timeout_s}s - the browser "
-                          f"driver is presumably dead (see notes\\45); stopping the suite here "
+                          f"driver is presumably dead; stopping the suite here "
                           f"rather than letting every remaining test hang the same way")
                 except Exception as exc:  # noqa: BLE001 - a test failure must not stop the rest
                     failures += 1

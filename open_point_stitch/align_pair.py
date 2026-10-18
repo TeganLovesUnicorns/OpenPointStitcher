@@ -904,7 +904,7 @@ def register_pair(
 
     if rejected_for_vote:
         log.info("%s -> %s: %d candidate(s) discarded, a matched surface or "
-                  "corner disagreed geometrically (notes\\57 Part D2)",
+                  "corner disagreed geometrically",
                   src.name, tgt.name, rejected_for_vote)
 
     if rejected_for_bound:

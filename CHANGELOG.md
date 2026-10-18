@@ -3,6 +3,10 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.50.4 (2026-10-18)
+
+- The run summary, log messages, command help and test messages no longer refer to internal development notes.
+
 ## 0.50.3 (2026-10-17)
 
 - The package is 38 modules instead of 60: each group of small modules that did one job together is now one file

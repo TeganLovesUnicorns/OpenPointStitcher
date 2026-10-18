@@ -39,8 +39,7 @@ def test_uncorrected_correction_leaks_the_root_tilt_into_the_child():
     root_tilt_magnitude = np.degrees(np.arccos(np.clip(root_target[2, 2], -1.0, 1.0)))
     assert tilt_deg > 5.0, "expected the child to inherit a large residual tilt from the root"
     assert abs(tilt_deg - root_tilt_magnitude) < 1.0, (
-        "the leaked tilt should track the root's own tilt magnitude, matching runs\\75's "
-        "live-data finding (the root's residual_tilt_deg matched its own original tilt exactly)"
+        "the leaked tilt should track the root's own tilt magnitude"
     )
 
 

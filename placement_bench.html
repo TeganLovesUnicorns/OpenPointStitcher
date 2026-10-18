@@ -4111,9 +4111,7 @@ $('mBatchVis').onclick=()=>{
   closeAllMenus();
   const scans=selectedScansList(); if(!scans.length)return;
   pushUndo();
-  // notes< point 3: MAJORITY rule - bring the whole selection to the
-  // state most of it is already in, then flip. What shipped before was
-  // "if any is hidden, hide all", a different rule (runs1 #16).
+  // Majority rule: bring the whole selection to the state most of it is already in, then flip.
   const showAll=scans.filter(s=>s.vis).length*2<=scans.length;
   scans.forEach(s=>{ s.vis=showAll; });
   glRebuildPoints();
@@ -4123,7 +4121,7 @@ $('mBatchLock').onclick=()=>{
   closeAllMenus();
   const scans=selectedScansList(); if(!scans.length)return;
   pushUndo();
-  const lockAll=scans.filter(s=>s.lock).length*2<=scans.length;  // notes< point 3
+  const lockAll=scans.filter(s=>s.lock).length*2<=scans.length;  // majority rule, as above
   scans.forEach(s=>{ s.lock=lockAll; });
   renderAll();
 };
@@ -4998,7 +4996,7 @@ function runAlignLinks(){
 // Post-run status lines, built from what the server reports it did, not from the checkboxes. The vote only exists
 // under "Run from my alignment" (adjacency_method 'feature').
 function voteStatusLine(r){
-  const head='detector voting (notes\\57): ';
+  const head='detector voting: ';
   if(!r.detector_vote_enabled) return head+'off';
   if(r.adjacency_method!=='feature')
     return head+'was ticked, but it only runs under "Run from my alignment", so it did NOT run this time';
@@ -5021,7 +5019,7 @@ function coarseSearchStatusLine(r){
   const seeded=r.n_placement_seeds||0;
   if(!seeded) return head+`ran for all ${total} attempted pair(s)`;
   const rest=total-seeded;
-  return head+`skipped for ${seeded} of ${total} attempted pair(s), which only refine near your placement (notes\\59)`
+  return head+`skipped for ${seeded} of ${total} attempted pair(s), which only refine near your placement`
     +(rest>0?`; ran normally for the other ${rest}`:'');
 }
 

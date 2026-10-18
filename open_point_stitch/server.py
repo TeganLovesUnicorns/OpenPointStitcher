@@ -2398,7 +2398,7 @@ def main(argv=None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--scans", default="/scans",
-                    help="import SOURCE only (notes\\43) - .pts files here are copied into a "
+                    help="import SOURCE only - .pts files here are copied into a "
                          "project's own scans-raw/ by Import, never read directly otherwise")
     ap.add_argument("--out", default="/out",
                     help="legacy single-folder placement.json location, kept only so an "
@@ -2406,7 +2406,7 @@ def main(argv=None) -> int:
                          "(see /api/projects/legacy-import) - a project's real output lives "
                          "inside its own folder under --projects, not here")
     ap.add_argument("--projects", default="/projects",
-                    help="where project folders live - notes\\43 Part 1")
+                    help="where project folders live")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--pattern", default="*.pts")

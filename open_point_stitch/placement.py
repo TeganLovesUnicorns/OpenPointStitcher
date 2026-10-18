@@ -231,7 +231,7 @@ def load_placements(path: str) -> LoadedPlacements:
         log.warning(
             "%s: every scan has an identity level_rotation. That is what a "
             "placement saved BEFORE the bench started exporting level_rotation "
-            "looks like (see notes\\05-placement-fixes.md), not necessarily "
+            "looks like, not necessarily "
             "correct data. If this file came from the bench, re-save it; if "
             "every one of these scans is genuinely unrotated, ignore this.",
             path,
@@ -256,7 +256,7 @@ def load_placements(path: str) -> LoadedPlacements:
         log.warning(
             "%s: %d anchor(s) saved in the old point-pin format. Converting "
             "each to a 2-member region anchor now; re-save from the bench to "
-            "make this permanent. See notes\\11-point-agreement-and-ui.md.",
+            "make this permanent.",
             path, len(old_pins),
         )
         for p in old_pins:
