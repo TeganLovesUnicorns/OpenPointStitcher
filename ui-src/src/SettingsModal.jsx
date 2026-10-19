@@ -149,6 +149,11 @@ export default function SettingsModal({ opened, onClose, onHelp }) {
                 helpAnchor="cbThicknessTrust" onHelp={onHelp}
                 title="When fine-tuning each pair, points far from a crisp surface count for less, and a pair matched on fuzzy surfaces pins its scans less firmly. Weights only: no point is ever dropped. Runs take about a third longer." />
             </div>
+            <div style={{ marginTop: 10 }}>
+              <Tg id="cbLimitsRelative" label="Movement limits ignore the whole layout moving together"
+                helpAnchor="cbLimitsRelative" onHelp={onHelp}
+                title="Off by default. On: the limits on how far a run may move each scan (50 cm and 5 degrees) and the whole layout (20 cm on average) only count scans moving against each other, so the layout sliding or turning as one piece reads as no movement. Off: every move counts from where the scan started." />
+            </div>
           </Pad>
         </Tabs.Panel>
 

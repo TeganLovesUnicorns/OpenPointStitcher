@@ -186,3 +186,17 @@ def pose_shift_m(payload: dict, pose1: ScanPose, pose2: ScanPose) -> float:
     """Mean distance this scan's preview points move between two poses; degrees and metres cannot just be
     subtracted."""
     return float(np.linalg.norm(world_cloud_points(payload, pose1) - world_cloud_points(payload, pose2), axis=1).mean())
+
+
+def common_motion(before: list[np.ndarray], after: list[np.ndarray]) -> tuple[float, np.ndarray]:
+    """Yaw (degrees, about the world origin) and 3D shift that best carry every scan's points from before to after
+    together. Each scan counts equally however many points it has."""
+    weights = np.concatenate([np.full(len(b), 1.0 / len(b)) for b in before])
+    return solve_yaw_translation(np.vstack(before), np.vstack(after), weights)
+
+
+def carry_pose(pose: ScanPose, yaw_deg: float, shift: np.ndarray) -> ScanPose:
+    """pose moved along with a whole-layout turn about the world origin and shift, as common_motion returns."""
+    xy = yaw_matrix2(yaw_deg) @ np.array([pose.x_m, pose.y_m]) + np.asarray(shift[:2], dtype=float)
+    return ScanPose(yaw_deg=pose.yaw_deg + yaw_deg, x_m=float(xy[0]), y_m=float(xy[1]), z_m=pose.z_m + float(shift[2]),
+                    pitch_deg=pose.pitch_deg, roll_deg=pose.roll_deg)

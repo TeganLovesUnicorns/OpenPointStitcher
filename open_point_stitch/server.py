@@ -47,8 +47,9 @@ from open_point_stitch.placement import (SCHEMA as PLACEMENT_SCHEMA, Anchor, Anc
                                     anchors_from_landmarks, is_placement_schema, load_placements,
                                     relative_transform)
 from open_point_stitch.lib.files import write_json_atomic
-from open_point_stitch.lib.poses import (ScanPose, pose_shift_m, rotation_angle_deg, tilt_of, world_cloud_points_as_drawn,
-                                        yaw_gap_deg, yaw_matrix2, yaw_of, yaw_transform)
+from open_point_stitch.lib.poses import (ScanPose, carry_pose, common_motion, pose_shift_m, rotation_angle_deg, tilt_of,
+                                        world_cloud_points, world_cloud_points_as_drawn, yaw_gap_deg, yaw_matrix2,
+                                        yaw_matrix3, yaw_of, yaw_transform)
 from open_point_stitch.export_plan import default_band, footprints_from_payloads, plan_cut, write_plan
 from open_point_stitch.wall_checks import measure_walls, summarise as summarise_walls
 from open_point_stitch.exclusions import filter_scans, for_export
@@ -697,6 +698,98 @@ def _layout_bound_check(seed_shifts_m: dict[str, float], bound_mean_m: float) ->
     return mean_shift_m > bound_mean_m, mean_shift_m
 
 
+@dataclasses.dataclass
+class MoveCheck:
+    """One scan's proposed move in a seeded run. anchor: the scan the run is pinned to; locked scans never move."""
+    name: str
+    start: ScanPose
+    proposed: ScanPose
+    payload: dict
+    anchor: bool = False
+    locked: bool = False
+    fitness: Optional[float] = None      # best accepted pair fit touching this scan, for the report
+
+
+@dataclasses.dataclass
+class LimitOutcome:
+    final: dict                          # name -> ScanPose to keep
+    capped: set
+    layout_tripped: bool
+    mean_shift_m: float
+    shifts: dict                         # name -> (m, deg) as judged; 0 for a refused scan; locked scans absent
+    rejected: list                       # one row per correction a limit threw away
+    common: Optional[tuple] = None       # relative only: the whole layout's (yaw deg, [dx, dy, dz])
+
+
+def _limit_moves(checks: list[MoveCheck], bound_m: float, bound_deg: float, layout_bound_m: float,
+                 relative: bool) -> LimitOutcome:
+    """Apply the per-scan and whole-layout limits. relative=False measures each move from where the scan started;
+    relative=True first removes the turn and shift the whole layout made together, so only scans moving against
+    each other count. A refused scan then keeps its place in the moved layout, and a fixed scan (anchor or locked)
+    out of step with the rest declines the whole run, since it cannot be carried."""
+    measured = "against the other scans" if relative else "from where it started"
+    final = {c.name: c.proposed for c in checks}
+    shifts, capped, rejected = {}, set(), []
+
+    def refuse(c: MoveCheck, limit: str, m: float, d: float, lim_m: float, lim_deg: Optional[float]) -> None:
+        rejected.append({"scan": c.name, "limit": limit, "measured": measured, "correction_m": m, "correction_deg": d,
+                         "limit_m": lim_m, "limit_deg": lim_deg, "fitness": c.fitness})
+
+    common = None
+    if relative:
+        before = {c.name: world_cloud_points(c.payload, c.start) for c in checks}
+        after = {c.name: world_cloud_points(c.payload, c.proposed) for c in checks}
+        names = [c.name for c in checks]
+        fit_on = names
+        yaw, shift = common_motion([before[n] for n in fit_on], [after[n] for n in fit_on])
+        for _ in range(3):              # refit without the scans moving against the rest, so they cannot drag it
+            r = yaw_matrix3(yaw)
+            rel = {n: float(np.linalg.norm(before[n] @ r.T + shift - after[n], axis=1).mean()) for n in names}
+            inliers = [n for n in names if rel[n] <= bound_m]
+            if len(inliers) < 2 or inliers == fit_on:
+                break
+            fit_on = inliers
+            yaw, shift = common_motion([before[n] for n in fit_on], [after[n] for n in fit_on])
+        r = yaw_matrix3(yaw)
+        common = (round(float(yaw), 4), [round(float(v), 4) for v in shift])
+        judged = {c.name: (round(float(np.linalg.norm(before[c.name] @ r.T + shift - after[c.name], axis=1).mean()), 4),
+                           round(yaw_gap_deg(c.proposed.yaw_deg, c.start.yaw_deg + yaw), 3)) for c in checks}
+    else:
+        judged = {c.name: (round(pose_shift_m(c.payload, c.start, c.proposed), 4),
+                           round(yaw_gap_deg(c.proposed.yaw_deg, c.start.yaw_deg), 3)) for c in checks if not c.locked}
+
+    fixed_out = False
+    for c in checks:
+        if c.name not in judged:
+            continue
+        m, d = judged[c.name]
+        if not c.locked:
+            shifts[c.name] = (m, d)
+        if m <= bound_m and d <= bound_deg:
+            continue
+        if relative and (c.anchor or c.locked):
+            refuse(c, "fixed scan", m, d, bound_m, bound_deg)
+            fixed_out = True
+            continue
+        if c.locked:
+            continue
+        refuse(c, "per scan", m, d, bound_m, bound_deg)
+        capped.add(c.name)
+        shifts[c.name] = (0.0, 0.0)
+        final[c.name] = carry_pose(c.start, common[0], np.asarray(common[1])) if relative else c.start
+
+    tripped, mean_m = _layout_bound_check({n: s[0] for n, s in shifts.items()}, layout_bound_m)
+    if tripped or fixed_out:
+        for c in checks:
+            moved = c.name in shifts and shifts[c.name][0] != 0.0
+            if tripped and moved:
+                refuse(c, "whole layout", shifts[c.name][0], shifts[c.name][1], layout_bound_m, None)
+            if moved or relative:       # relative: a refused scan was carried with the layout, so it goes back too
+                final[c.name] = c.start
+    return LimitOutcome(final=final, capped=capped, layout_tripped=tripped or fixed_out, mean_shift_m=mean_m,
+                        shifts=shifts, rejected=rejected, common=common)
+
+
 _SEARCH_KNOBS = {"local_search_n": int, "local_search_radius_m": float, "local_search_yaw_deg": float,
                  "local_search_height_m": float, "local_only_bound_m": float, "local_only_bound_deg": float,
                  "min_improvement_frac": float, "scan_bound_m": float, "scan_bound_deg": float,
@@ -1099,9 +1192,12 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
         by_name = {s["name"]: s for s in data["scans"]}
         pose_rows = []
         pose_updates: dict[str, dict] = {}
-        # How far each scan moved this run from the pose it was seeded from (not the original hand placement):
-        # the per-scan and whole-layout bounds are checked against this.
-        seed_shifts_m: dict[str, float] = {}
+        proposals: dict[str, tuple] = {}
+        best_fit: dict[int, float] = {}
+        for r in results:
+            if r.accepted:
+                for i in (r.source, r.target):
+                    best_fit[i] = max(best_fit.get(i, 0.0), float(r.fitness))
         for idx in largest:
             name = scans[idx].name
             if name not in placements or name not in by_name:
@@ -1127,68 +1223,61 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                                 y_m=round(y_m, 5), z_m=round(z_m, 5))
             update = {"yaw_deg": new_pose.yaw_deg, "x_m": new_pose.x_m,
                       "y_m": new_pose.y_m, "z_m": new_pose.z_m}
-            # current is what this run started from (the on-disk pose at job start); human is the user's original
-            # hand placement, which may be much older and is never changed by an alignment.
-            current = ScanPose.from_dict(s, strict=True)
+            # human is the user's original hand placement, which may be much older and is never changed by an alignment.
             human = ScanPose.from_dict(s, strict=True, prefix="human_")
-            capped = False
             if name in app.payloads:
                 update["align_moved_m"] = round(pose_shift_m(app.payloads[name], human, new_pose), 4)
                 update["align_moved_deg"] = round(yaw_gap_deg(new_pose.yaw_deg, s["human_yaw_deg"]), 3)
-                # Per-scan bound, against the pose this run was seeded from, never the (possibly stale) hand placement.
-                seed_shift_m = round(pose_shift_m(app.payloads[name], current, new_pose), 4)
-                seed_shift_deg = round(yaw_gap_deg(new_pose.yaw_deg, s["yaw_deg"]), 3)
-                seed_shifts_m[name] = seed_shift_m
-                bound_m = cfg.scan_bound_m if cfg.scan_bound_m is not None else cfg.local_only_bound_m
-                bound_deg = cfg.scan_bound_deg if cfg.scan_bound_deg is not None else cfg.local_only_bound_deg
-                if seed_from_placement and (seed_shift_m > bound_m or seed_shift_deg > bound_deg):
-                    log.info("%s: solved position %.2fm/%.1fdeg from where this run started exceeds "
-                             "the %.2fm/%.1fdeg bound - keeping this run's starting position for this scan",
-                             name, seed_shift_m, seed_shift_deg, bound_m, bound_deg)
-                    new_pose = current
-                    seed_shifts_m[name] = 0.0
-                    # align_moved_m/deg keep reporting real distance from the ORIGINAL hand
-                    # placement (may be nonzero - honest, not reset to a false 0) so the
-                    # "moved by align" readout and Revert still mean what they always have.
-                    update = {"yaw_deg": current.yaw_deg, "x_m": current.x_m,
-                              "y_m": current.y_m, "z_m": current.z_m,
-                              "align_moved_m": round(pose_shift_m(app.payloads[name], human, current), 4),
-                              "align_moved_deg": round(yaw_gap_deg(current.yaw_deg, s["human_yaw_deg"]), 3)}
-                    capped = True
             pose_updates[name] = update
-            # residual_tilt_deg is None when the candidate was capped and discarded.
-            pose_rows.append({"scan": name, "applied": True,
-                              "residual_tilt_deg": None if capped else round(tilt_deg, 3),
-                              "dropped_tilt_deg": round(dropped_tilt, 3),
-                              "centre_shift_m": [round(float(v), 4) for v in centre_shift],
-                              **({"kept_placement_bound_exceeded": True} if capped else {})})
+            row = {"scan": name, "applied": True, "residual_tilt_deg": round(tilt_deg, 3),
+                   "dropped_tilt_deg": round(dropped_tilt, 3),
+                   "centre_shift_m": [round(float(v), 4) for v in centre_shift]}
+            pose_rows.append(row)
+            proposals[name] = (new_pose, idx, row)
 
-        # Whole-layout bound: moves each inside the per-scan bound can still add up; over it, this run's whole
-        # geometry search is declined.
-        layout_bound_tripped, mean_shift_m = _layout_bound_check(
-            seed_shifts_m, cfg.local_only_layout_bound_mean_m) if seed_from_placement else (False, 0.0)
-        if layout_bound_tripped:
-            log.info("automatic align: mean seed-relative shift across %d scan(s) is %.2fm, over "
-                     "the %.2fm whole-layout bound - declining this run's geometry search for "
-                     "every scan, same as kept-placement one level up",
-                     len(seed_shifts_m), mean_shift_m, cfg.local_only_layout_bound_mean_m)
-            for name in list(pose_updates.keys()):
-                if name not in seed_shifts_m or seed_shifts_m[name] == 0.0:
-                    continue  # locked/root/already-capped rows are untouched
-                s = by_name[name]
-                current = ScanPose.from_dict(s, strict=True)
+        # Movement limits, against the pose this run was seeded from (never the possibly stale hand placement): per
+        # scan, then the whole layout, since moves each inside the per-scan limit can still add up.
+        limits_relative = bool(params.get("limits_relative", False))
+        limit_outcome = None
+        if seed_from_placement:
+            checks = [MoveCheck(name=n, start=ScanPose.from_dict(by_name[n], strict=True), proposed=p[0],
+                                payload=app.payloads[n], anchor=p[1] == root_idx, fitness=best_fit.get(p[1]))
+                      for n, p in proposals.items() if n in app.payloads]
+            if limits_relative:
+                checks += [MoveCheck(name=s["name"], start=ScanPose.from_dict(s, strict=True),
+                                     proposed=ScanPose.from_dict(s, strict=True), payload=app.payloads[s["name"]],
+                                     locked=True) for s in data["scans"]
+                           if s.get("locked") and s["name"] in app.payloads and s["name"] in placements]
+            limit_outcome = _limit_moves(
+                checks, cfg.scan_bound_m if cfg.scan_bound_m is not None else cfg.local_only_bound_m,
+                cfg.scan_bound_deg if cfg.scan_bound_deg is not None else cfg.local_only_bound_deg,
+                cfg.local_only_layout_bound_mean_m, relative=limits_relative)
+            for n, (new_pose, _, row) in proposals.items():
+                kept = limit_outcome.final.get(n, new_pose)
+                if kept == new_pose:
+                    continue
+                s = by_name[n]
                 human = ScanPose.from_dict(s, strict=True, prefix="human_")
-                pose_updates[name] = {
-                    "yaw_deg": current.yaw_deg, "x_m": current.x_m,
-                    "y_m": current.y_m, "z_m": current.z_m,
-                    "align_moved_m": round(pose_shift_m(app.payloads[name], human, current), 4)
-                                     if name in app.payloads else 0.0,
-                    "align_moved_deg": round(yaw_gap_deg(current.yaw_deg, s["human_yaw_deg"]), 3),
-                }
-            for row in pose_rows:
-                if row.get("applied") and row["scan"] in seed_shifts_m and seed_shifts_m[row["scan"]] > 0.0:
-                    row["residual_tilt_deg"] = None
+                if n not in limit_outcome.capped or limit_outcome.layout_tripped or not limits_relative:
+                    kept = ScanPose.from_dict(s, strict=True)       # back to where this run started
+                else:                                               # carried with the layout
+                    kept = ScanPose(yaw_deg=round(kept.yaw_deg, 4), x_m=round(kept.x_m, 5), y_m=round(kept.y_m, 5),
+                                    z_m=round(kept.z_m, 5))
+                # align_moved_m/deg keep reporting real distance from the ORIGINAL hand placement, so the
+                # "moved by align" readout and Revert still mean what they always have.
+                pose_updates[n] = {"yaw_deg": kept.yaw_deg, "x_m": kept.x_m, "y_m": kept.y_m, "z_m": kept.z_m,
+                                   "align_moved_m": round(pose_shift_m(app.payloads[n], human, kept), 4),
+                                   "align_moved_deg": round(yaw_gap_deg(kept.yaw_deg, s["human_yaw_deg"]), 3)}
+                row["residual_tilt_deg"] = None     # the solved pose was discarded
+                if n in limit_outcome.capped:
+                    row["kept_placement_bound_exceeded"] = True
+                if limit_outcome.layout_tripped and (n not in limit_outcome.capped or limits_relative):
                     row["layout_bound_exceeded"] = True
+            for r in limit_outcome.rejected:
+                log.info("%s: %s limit refused a %.2fm/%.1fdeg correction (measured %s, fit %s)", r["scan"],
+                         r["limit"], r["correction_m"], r["correction_deg"] or 0.0, r["measured"], r["fitness"])
+        layout_bound_tripped = bool(limit_outcome and limit_outcome.layout_tripped)
+        mean_shift_m = limit_outcome.mean_shift_m if limit_outcome else 0.0
 
         # Second stage: the user's links refine this job's result (align_from_anchors), so a link can move a scan the
         # geometry search moved or left alone.
@@ -1359,6 +1448,10 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
             # declined.
             "layout_bound_tripped": layout_bound_tripped,
             "layout_mean_shift_m": round(mean_shift_m, 4),
+            # Every correction a movement limit threw away: which limit, how big, and the best fit behind it.
+            "limits_measured": "against the other scans" if limits_relative else "from where each scan started",
+            "rejected_corrections": limit_outcome.rejected if limit_outcome else [],
+            "layout_common_move": limit_outcome.common if limit_outcome else None,
         }
         _write_align_auto_report(app.out_dir, result)
         app.jobs.finish(job_id, result)
