@@ -187,6 +187,36 @@ def test_layout_bound_already_capped_scans_pull_the_mean_down_not_out():
     assert tripped is False  # 0.15 < 0.20: diluted by the steady scans, as intended
 
 
+def test_the_shipped_settings_name_no_venues_scans():
+    from open_point_stitch.config import PipelineConfig
+    assert PipelineConfig().excluded_pairs == frozenset(), PipelineConfig().excluded_pairs
+
+
+def test_a_project_names_its_own_pairs_never_to_try_and_a_save_keeps_them():
+    from open_point_stitch.server import _SERVER_OWNED_KEYS, _project_excluded_pairs
+    got = _project_excluded_pairs({"excluded_pairs": [["scan a", "scan b"], ["scan c", "scan a"]]})
+    assert got == frozenset([frozenset(("scan a", "scan b")), frozenset(("scan a", "scan c"))]), got
+    assert _project_excluded_pairs({}) == frozenset()
+    assert "excluded_pairs" in _SERVER_OWNED_KEYS, "a page Save must not drop the project's excluded pairs"
+
+
+def test_the_reference_scan_is_the_one_the_run_is_pinned_to():
+    from open_point_stitch.server import _pick_root
+    names = ["GR from entry", "green room", "stage", "seating 2"]
+    largest = [0, 1, 3]
+    assert _pick_root(largest, names, None) == 0, "no reference named: the first scan, as before"
+    assert _pick_root(largest, names, "seating 2") == 3
+    assert _pick_root(largest, names, "stage") == 0, "a reference outside the joined-up group cannot pin it"
+    assert _pick_root(largest, names, "not a scan") == 0
+
+
+def test_a_links_group_keeps_the_reference_scan_still():
+    from open_point_stitch.align_anchors import _still_scan
+    assert _still_scan(["b", "c", "a"], None) == "b", "no reference: the first-listed scan, as before"
+    assert _still_scan(["b", "c", "a"], "a") == "a"
+    assert _still_scan(["b", "c"], "a") == "b"
+
+
 def test_preview_workers_stop_when_idle_and_start_again_for_new_work():
     import time
     pool = _IdleStoppingPool(2)

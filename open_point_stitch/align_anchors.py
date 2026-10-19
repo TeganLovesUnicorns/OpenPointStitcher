@@ -322,6 +322,12 @@ def _summarise_matched_on(edges: list[dict]) -> str:
     return f"{n_region} of {len(edges)} anchor pairs on the boxes at full resolution; the others on {reasons}"
 
 
+def _still_scan(group: list[str], reference: Optional[str]) -> str:
+    """The scan a free-floating group of linked scans keeps still: the reference scan if it is in the group, else the
+    group's first-listed scan."""
+    return reference if reference in group else group[0]
+
+
 def align_from_anchors(
     payloads: dict[str, dict],       # scan name -> the bench preview payload
     poses: dict[str, ScanPose],      # scan name -> its CURRENT pose (mutated copy returned)
@@ -336,11 +342,13 @@ def align_from_anchors(
     icp_max_iteration: int = 30,
     progress_cb: Optional[Callable[[int, int], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
+    reference_scan: Optional[str] = None,
 ) -> AlignResult:
     """Match every link pair (4 DOF ICP seeded from the link's region, on full-resolution box points when
     scans_folder has them) against the current poses, gate on tilt, fitness and a shift limit, then solve all
     accepted pairs together so two links touching one scan both count. Locked scans and scans outside subset
-    never move and act as references; a group with none keeps its first-listed scan still. One row per scan.
+    never move and act as references; a group with none keeps reference_scan, or else its first-listed scan, still.
+    One row per scan.
 
     progress_cb(done, total) runs after each link; should_cancel is checked at the same point. A cancel returns
     with cancelled=True before the next link, and the caller must not write any pose."""
@@ -500,14 +508,14 @@ def align_from_anchors(
         # untouched copy of the caller's poses.
         return AlignResult(poses=start, rows=[], skipped=skipped, cancelled=True, n_anchors_completed=n_completed)
 
-    # Who may move. A group of scans joined by accepted anchors with nothing fixed in it keeps its first-listed
-    # scan still, so the whole group cannot drift together.
+    # Who may move. A group of scans joined by accepted anchors with nothing fixed in it keeps the reference scan
+    # (or else its first-listed scan) still, so the whole group cannot drift together.
     in_graph = [n for n in appeared if any(n in (c.a, c.b) for c in constraints)]
     fixed_names = {n for n in in_graph if is_fixed(n)}
     at = {n: k for k, n in enumerate(in_graph)}
     for group in connected_groups(len(in_graph), [(at[c.a], at[c.b]) for c in constraints]):
         if not any(in_graph[k] in fixed_names for k in group):
-            fixed_names.add(in_graph[group[0]])
+            fixed_names.add(_still_scan([in_graph[k] for k in group], reference_scan))
     free = [n for n in in_graph if n not in fixed_names]
     deltas = graph4.solve_4dof(constraints, free) if constraints else {}
 

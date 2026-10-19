@@ -47,7 +47,7 @@ def main() -> int:
         )
         return 1
     html = splice(TEMPLATE, BUNDLE)
-    with open(TEMPLATE, "w", encoding="utf-8") as fh:
+    with open(TEMPLATE, "w", encoding="utf-8", newline="\n") as fh:     # LF on Windows too
         fh.write(html)
     print(f"spliced {BUNDLE} into {TEMPLATE}")
     return 0

@@ -97,16 +97,24 @@ PREVIEW_MAX_WALLS = 8        # "standard" or "thorough" (looks further)
 THOROUGH_MAX_WALLS = 24
 
 
-def preview_options(settings: Optional[dict] = None) -> dict:
+def preview_options(settings: Optional[dict] = None, keep_level_scans: Optional[list] = None) -> dict:
     """The project settings a preview is built with. Passed to every build explicitly: builds run in worker
-    processes, which never see a setting changed in the server process."""
+    processes, which never see a setting changed in the server process. A levelling limit of 0 means no scan is
+    levelled to its floor; keep_level_scans names the scans that keep the scanner's level anyway."""
     settings = settings or {}
     try:
         tilt = float(settings.get("level_tilt_deg", align_gravity.DEFAULT_MAX_TILT_DEG))
     except (TypeError, ValueError):
         tilt = align_gravity.DEFAULT_MAX_TILT_DEG
     return {"level_tilt_deg": tilt,
-            "max_walls": THOROUGH_MAX_WALLS if settings.get("wall_search") == "thorough" else PREVIEW_MAX_WALLS}
+            "max_walls": THOROUGH_MAX_WALLS if settings.get("wall_search") == "thorough" else PREVIEW_MAX_WALLS,
+            "keep_level_scans": sorted(keep_level_scans or [])}
+
+
+def _keeps_scanner_level(path: str, options: dict) -> bool:
+    """Whether this scan keeps the level the scanner recorded instead of being levelled to its floor."""
+    name = os.path.splitext(os.path.basename(path))[0]
+    return options["level_tilt_deg"] == 0 or name in options.get("keep_level_scans", ())
 
 
 def _cache_key(path: str, options: Optional[dict] = None) -> dict:
@@ -122,6 +130,8 @@ def _cache_key(path: str, options: Optional[dict] = None) -> dict:
     }
     if options["max_walls"] != PREVIEW_MAX_WALLS:     # only then, so standard previews saved earlier stay valid
         key["max_walls"] = options["max_walls"]
+    if _keeps_scanner_level(path, options):           # likewise
+        key["keep_scanner_level"] = True
     return key
 
 
@@ -139,6 +149,8 @@ def _cache_key_and_path(path: str, cache_dir: str, exclusions=None, stairs=None,
         key["exclusions"] = json.loads(json.dumps([vars(e) for e in exclusions or []], default=list))
         key["stairs"] = json.loads(json.dumps([vars(e) for e in stairs or []], default=list))
         cpath = _cache_path(os.path.join(cache_dir, "edited"), path)
+    if key.get("keep_scanner_level"):                 # kept apart, so switching back finds the levelled one again
+        cpath = os.path.join(os.path.dirname(cpath), "scanner-level", os.path.basename(cpath))
     return key, cpath
 
 
@@ -230,7 +242,9 @@ def build_scan_payload(path: str, preview_max_points: int = PREVIEW_MAX_POINTS, 
 
     on_stairs = excluded_mask(np.asarray(down.points), stairs) if stairs else np.zeros(len(down.points), dtype=bool)
     structure = down.select_by_index(np.flatnonzero(~on_stairs).tolist()) if on_stairs.any() else down
-    level = estimate_level(structure, max_tilt_deg=options["level_tilt_deg"])
+    level = estimate_level(structure, max_tilt_deg=options["level_tilt_deg"] or align_gravity.DEFAULT_MAX_TILT_DEG)
+    if _keeps_scanner_level(path, options):
+        level = align_gravity.as_scanner_level(level)
     down.rotate(level.rotation, center=(0, 0, 0))
     if structure is not down:
         structure.rotate(level.rotation, center=(0, 0, 0))

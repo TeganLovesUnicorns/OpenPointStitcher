@@ -1004,6 +1004,10 @@ def register_pair(
         origin = "kept_placement"
     method = cfg.icp_method
 
+    def surface_fit_at(t: np.ndarray) -> float:
+        # A refine stage keeps its change only on surface fit: raw fitness rewards one cloud nested inside the other.
+        return _verify.score_candidate_fast(src.down, tgt.down, target_nns, t, cfg, **judge_w).surface_fit
+
     if cfg.use_colored_icp:
         report("colour refine")
         colored = colored_refine(src, tgt, transform, cfg)
@@ -1012,7 +1016,8 @@ def register_pair(
             # are actually comparable.
             ct, cf, cr, cn = _score(src, tgt, np.asarray(colored.transformation), cfg, local_only=local_only)
             ctilt = tilt_of(ct)
-            improved = cf >= fitness and not (cfg.assume_level and ctilt > cfg.max_tilt_deg)
+            improved = (surface_fit_at(ct) >= surface_fit_at(transform)
+                        and not (cfg.assume_level and ctilt > cfg.max_tilt_deg))
             if improved:
                 transform, fitness, rmse, ncorr, tilt = ct, cf, cr, cn, ctilt
                 method = "colored+" + cfg.icp_method
@@ -1032,7 +1037,8 @@ def register_pair(
                 # Re-score at the same voxel-level threshold as the rest of this function, so "improved" means one thing.
                 rt, rf, rr, rn = _score(src, tgt, refined, cfg, local_only=local_only)
                 rtilt = tilt_of(rt)
-                improved = rf >= fitness and not (cfg.assume_level and rtilt > cfg.max_tilt_deg)
+                improved = (surface_fit_at(rt) >= surface_fit_at(transform)
+                            and not (cfg.assume_level and rtilt > cfg.max_tilt_deg))
                 if improved:
                     transform, fitness, rmse, ncorr, tilt = rt, rf, rr, rn, rtilt
                     method = method + "+full_res"

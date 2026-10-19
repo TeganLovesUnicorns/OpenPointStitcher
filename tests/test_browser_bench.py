@@ -4548,6 +4548,138 @@ def test_height_settle_setting_is_on_by_default_and_reaches_the_run(page):
     print("    on by default, unticking reached the server and the run's request, put back on")
 
 
+def test_relative_movement_limits_are_off_by_default_and_reach_the_run(page):
+    """Settings > Aligning > Movement limits ignore the whole layout moving together: off by default, saved, and sent
+    with a run; with no scan dragged to the top, no reference scan is sent. Cancelled at once."""
+    _goto(page)
+    page.locator('.menubtn[data-menu="menuSettings"]').click()
+    page.locator('button[role="tab"]:has-text("Aligning")').click()
+    assert not page.locator("#cbLimitsRelative").is_checked(), "relative movement limits should be off by default"
+    page.locator("#cbLimitsRelative").check()
+    try:
+        assert _saved_settings(page, limits_relative=True).get("limits_relative") is True, "ticking did not reach the server"
+        page.keyboard.press("Escape")
+        _pick_run(page, "align_auto_seeded")
+        with page.expect_request(lambda r: "/api/jobs" in r.url and r.method == "POST") as req_info:
+            _press_run(page)
+        body = req_info.value.post_data_json
+        assert body.get("limits_relative") is True, f"the run was not told the setting: {body}"
+        assert "reference_scan" not in body, f"no scan was dragged to the top, so no reference is chosen: {body}"
+        page.wait_for_timeout(1000)
+        page.locator("#bCancelJob").click()
+        page.wait_for_function("() => { const t = document.getElementById('out').value; "
+                               "return t.includes('cancelled') || t.includes('AUTOMATIC ALIGN FAILED'); }", timeout=120_000)
+    finally:
+        page.locator('.menubtn[data-menu="menuSettings"]').click()
+        page.locator('button[role="tab"]:has-text("Aligning")').click()
+        page.locator("#cbLimitsRelative").uncheck()
+        assert _saved_settings(page, limits_relative=False).get("limits_relative") is False, "the setting was not put back"
+        page.keyboard.press("Escape")
+    print("    off by default, ticking reached the server and the run (no reference chosen, none sent), put back off")
+
+
+def test_export_tightened_with_links_is_off_by_default_and_reaches_the_export(page):
+    """Settings > Exporting > Tighten the export with my links: off by default, saved, and sent as refine with File >
+    Export; the export's per-link lines are reported. The server's answer is faked."""
+    _goto(page)
+    sent = []
+    page.route("**/api/jobs", lambda route: (sent.append(route.request.post_data_json), route.fulfill(json={"id": "fakeexport"}))
+               if route.request.method == "POST" else route.continue_())
+    page.route("**/api/jobs/fakeexport", lambda route: route.fulfill(json={
+        "id": "fakeexport", "state": "done", "progress": None,
+        "result": {"points": 1000, "output_path": "/projects/qa/exports/merged-y.pts", "skipped_no_placement": [],
+                   "refine_log": [{"scan": "nowhere", "against": "x", "icp_fitness": 0.42, "shift_mean_m": 0.03,
+                                   "applied": True}]}}))
+    page.locator('.menubtn[data-menu="menuSettings"]').click()
+    page.locator('button[role="tab"]:has-text("Export")').click()
+    assert not page.locator("#cbExportRefine").is_checked(), "tightening with links should be off by default"
+    page.locator("#cbExportRefine").check()
+    try:
+        assert _saved_settings(page, export_refine=True).get("export_refine") is True, "ticking did not reach the server"
+        page.keyboard.press("Escape")
+        page.locator('.menubtn[data-menu="menuFile"]').click()
+        page.locator("#mExport").click()
+        page.wait_for_function("() => /EXPORTED|EXPORT FAILED/.test($('out').value)", timeout=30_000)
+        assert sent and sent[-1].get("refine") is True, f"the export was not told to tighten with links: {sent}"
+        assert "tightened with links: nowhere moved (fit 0.42" in page.locator("#out").input_value()
+    finally:
+        page.unroute("**/api/jobs"); page.unroute("**/api/jobs/fakeexport")
+        page.locator('.menubtn[data-menu="menuSettings"]').click()
+        page.locator('button[role="tab"]:has-text("Export")').click()
+        page.locator("#cbExportRefine").uncheck()
+        assert _saved_settings(page, export_refine=False).get("export_refine") is False, "the setting was not put back"
+        page.keyboard.press("Escape")
+    print(f"    off by default, ticking saved and sent refine={sent[-1].get('refine')}, link line reported, put back")
+
+
+def test_a_scan_dragged_to_the_top_is_the_reference_after_a_reload(page):
+    """Dragging a scan to the top of the list makes it the reference: the star moves, a save records it, a run is told
+    it, and a reload puts it back on top. The run's answer is faked. Restores the file."""
+    if not PROJECT_DIR:
+        print("SKIP: PROJECT_DIR not set")
+        return
+    kept = _keep_project_file()
+    try:
+        _goto(page)
+        rows = page.locator("#scanlist .scan")
+        second = page.evaluate("() => S[drawOrder[1]].name")
+        rows.nth(1).drag_to(rows.nth(0))
+        assert page.evaluate("() => S[drawOrder[0]].name") == second, "the drag did not move the scan to the top"
+        assert "★" in rows.nth(0).inner_text(), "the reference star is not on the new top scan"
+        with page.expect_response(lambda r: r.url.endswith("/api/placement") and r.request.method == "POST"):
+            page.locator("#bSave").click()
+        with open(kept[0]) as fh:
+            assert json.load(fh).get("reference_scan") == second, "the save did not record the reference scan"
+        sent = []
+        page.route("**/api/jobs", lambda route: (sent.append(route.request.post_data_json),
+                                                 route.fulfill(status=500, json={"error": "not run in this test"}))
+                   if route.request.method == "POST" else route.continue_())
+        _pick_run(page, "align_auto_seeded")
+        _press_run(page)
+        page.wait_for_function("() => /not run in this test/.test($('out').value)", timeout=30_000)
+        page.unroute("**/api/jobs")
+        assert sent and sent[-1].get("reference_scan") == second, f"the run was not told the reference scan: {sent}"
+        _goto(page)
+        page.wait_for_function(f"() => S.length && S[drawOrder[0]].name === {json.dumps(second)}", timeout=30_000)
+    finally:
+        _put_back(page, kept)
+    print(f"    dragged {second!r} to the top, star moved, saved and sent as reference_scan, back on top after a reload")
+
+
+def test_keep_the_iphones_level_rebuilds_that_scan_saves_it_and_unticking_levels_it_again(page):
+    """Review bar > keep the iPhone's level: off by default; ticking saves the choice and rebuilds that scan's preview
+    with no levelling turn; unticking levels it to its floor again. Restores the file."""
+    if not PROJECT_DIR:
+        print("SKIP: PROJECT_DIR not set")
+        return
+    kept = _keep_project_file()
+    try:
+        _goto(page)
+        scan_i = _select_scan_row(page, 0)
+        page.locator('.menubtn[data-menu="menuEdit"]').click()
+        page.locator("#mReviewScan").click()
+        assert not page.locator("#rvKeepLevel").is_checked(), "a scan should be levelled to its floor by default"
+        page.locator("#rvKeepLevel").check()
+        page.wait_for_function("() => /keeps the iPhone's level|could not/.test($('rvInfo').textContent)", timeout=240_000)
+        info = page.locator("#rvInfo").inner_text()
+        assert "keeps the iPhone's level" in info, info
+        rot = page.evaluate("(i) => S[i].level_rotation", scan_i)
+        assert all(abs(rot[r][c] - (1.0 if r == c else 0.0)) < 1e-9 for r in range(3) for c in range(3)), rot
+        with open(kept[0]) as fh:
+            name = page.evaluate("(i) => S[i].name", scan_i)
+            entry = next(s for s in json.load(fh)["scans"] if s["name"] == name)
+        assert entry.get("keep_scanner_level") is True, entry
+        page.locator("#rvKeepLevel").uncheck()
+        page.wait_for_function("() => /levelled to its floor again|could not/.test($('rvInfo').textContent)", timeout=240_000)
+        rot = page.evaluate("(i) => S[i].level_rotation", scan_i)
+        assert any(abs(rot[r][c] - (1.0 if r == c else 0.0)) > 1e-9 for r in range(3) for c in range(3)), \
+            "unticking did not level the scan to its floor again"
+        page.locator("#rvDone").click()
+    finally:
+        _put_back(page, kept)
+    print("    off by default; ticking rebuilt the scan with no levelling turn and saved it; unticking levelled it again")
+
+
 def test_automatic_align_starts(page):
     """Automatic align can be started from the page: choosing it and pressing Run starts a real server job and locks the
     resource controls. Kept last: the job keeps running after this test returns, so nothing after it may rely on
@@ -4790,6 +4922,9 @@ TESTS = [
     test_labels_given_in_review_colour_the_points_list_on_their_tab_and_survive_a_reload,
     test_a_site_measurement_is_clicked_on_two_walls_listed_and_saved,
     test_export_from_the_file_menu_saves_then_starts_the_export_and_reports_it,
+    test_export_tightened_with_links_is_off_by_default_and_reaches_the_export,
+    test_a_scan_dragged_to_the_top_is_the_reference_after_a_reload,     # puts the file back
+    test_keep_the_iphones_level_rebuilds_that_scan_saves_it_and_unticking_levels_it_again,  # puts the file back
     test_enter_commits_an_anchor_drawn_with_the_tool_and_its_drop_button_removes_it,
     test_unlink_and_link_buttons_in_the_links_table,
     test_turn_buttons_and_revert_to_my_placement_in_the_selected_panel,
@@ -4797,6 +4932,7 @@ TESTS = [
     test_hand_moves_are_logged_to_the_project_folder,  # before the job tests: a running job refuses every move
     test_run_from_alignment_using_links_too_starts_with_the_right_params,  # cancels its own job; must not leave one running before the next test
     test_height_settle_setting_is_on_by_default_and_reaches_the_run,  # cancels its own job too
+    test_relative_movement_limits_are_off_by_default_and_reach_the_run,  # cancels its own job
     test_automatic_align_starts,  # LAST: leaves a real job running server-side, see its own docstring
 ]
 
@@ -4817,6 +4953,8 @@ TEST_TIMEOUT_OVERRIDES_S = {
     "test_a_landmark_named_in_two_scans_links_them_in_a_run": 320,    # a real anchors-only run on two scans
     "test_run_from_alignment_using_links_too_starts_with_the_right_params": 180,  # loads 14 real scans' full-res data before the first cancel check point
     "test_height_settle_setting_is_on_by_default_and_reaches_the_run": 180,  # same reason
+    "test_relative_movement_limits_are_off_by_default_and_reach_the_run": 180,  # same reason
+    "test_keep_the_iphones_level_rebuilds_that_scan_saves_it_and_unticking_levels_it_again": 300,  # two preview rebuilds
     "test_no_text_or_controls_overlap_at_common_window_sizes": 240,   # 20 full-page scans of every text box, at one thread
     "test_scans_from_anywhere_import_into_a_new_project_and_an_open_one": 240,  # opens a new project twice, previews built
     "test_review_view_removes_points_by_box_lasso_and_brush_and_the_server_cuts_the_same": 180,  # reads one full scan

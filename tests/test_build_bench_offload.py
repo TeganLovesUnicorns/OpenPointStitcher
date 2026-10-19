@@ -70,6 +70,50 @@ def test_a_second_call_through_the_pool_hits_the_cache():
         assert first == second
 
 
+def _write_tipped_room(path: str, deg: float) -> None:
+    """The room with its floor 1.2 m below the scanner, then tipped `deg` about x, as a raked floor would look."""
+    _write_room(path, seed=4)
+    with open(path) as fh:
+        rows = [ln.split() for ln in fh.read().splitlines()[1:]]
+    pts = np.array([[float(v) for v in r[:3]] for r in rows]) - [0.0, 0.0, 1.2]
+    a = np.radians(deg)
+    pts = pts @ np.array([[1, 0, 0], [0, np.cos(a), -np.sin(a)], [0, np.sin(a), np.cos(a)]]).T
+    with open(path, "w") as fh:
+        fh.write(f"{len(pts)}\n")
+        for p, r in zip(pts, rows):
+            fh.write(f"{p[0]:.4f} {p[1]:.4f} {p[2]:.4f} {r[3]} {r[4]} {r[5]}\n")
+
+
+def test_keeping_the_iphones_level_leaves_the_scan_unturned_and_still_finds_its_floor():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "room.pts")
+        _write_tipped_room(path, 2.0)
+        plain = build_bench.preview_options({})
+        kept = build_bench.preview_options({}, keep_level_scans=["room"])
+        p_plain, _ = build_bench.build_scan_payload_cached(path, os.path.join(tmp, "a"), None, None, plain)
+        p_kept, _ = build_bench.build_scan_payload_cached(path, os.path.join(tmp, "a"), None, None, kept)
+        assert not np.allclose(p_plain["level_rotation"], np.eye(3)), "the plain build should level to the floor"
+        assert np.allclose(p_kept["level_rotation"], np.eye(3)), p_kept["level_rotation"]
+        assert abs(p_kept["tilt"] - 2.0) < 0.5, f"the floor's own slope is still reported: {p_kept['tilt']}"
+        assert abs(p_kept["floor_z"] - (-1.2 / np.cos(np.radians(2.0)))) < 0.02, p_kept["floor_z"]
+        assert build_bench.load_cached_payload(path, os.path.join(tmp, "a"), options=kept) == p_kept
+        assert build_bench.load_cached_payload(path, os.path.join(tmp, "a"), options=plain) == p_plain, \
+            "the plain saved preview must survive next to the kept-level one"
+        other = build_bench.preview_options({}, keep_level_scans=["some other scan"])
+        assert build_bench._cache_key(path, other) == build_bench._cache_key(path, plain), \
+            "another scan's switch must not invalidate this scan's saved preview"
+
+
+def test_levelling_off_for_the_project_keeps_every_scan_at_the_iphones_level():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "room.pts")
+        _write_tipped_room(path, 2.0)
+        off = build_bench.preview_options({"level_tilt_deg": 0})
+        p_off, _ = build_bench.build_scan_payload_cached(path, os.path.join(tmp, "a"), None, None, off)
+        assert np.allclose(p_off["level_rotation"], np.eye(3)), p_off["level_rotation"]
+        assert abs(p_off["tilt"] - 2.0) < 0.5, p_off["tilt"]
+
+
 def test_the_levelling_setting_reaches_the_worker_and_its_saved_preview_is_found_again():
     # Builds run in fresh worker processes, which never see a setting changed in the server process, so settings must
     # be passed in and be part of the cache key.

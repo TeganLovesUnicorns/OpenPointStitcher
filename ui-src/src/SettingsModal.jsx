@@ -72,6 +72,7 @@ export default function SettingsModal({ opened, onClose, onHelp }) {
               defaultValue="15"
               title={"When a scan is levelled to its floor, this is the steepest floor the tool will accept as 'the floor'. Raked seating and sloped floors lie between about 2 and 8 degrees; a lower limit (3) stops a ramp or a raked section being mistaken for the floor, at the cost of failing on a genuinely steep one. Takes effect the next time previews are built (File > Rebuild previews)."}
               data={[
+                { value: "0", label: "Off: keep every scan's level from the iPhone" },
                 { value: "3", label: "3 degrees (strict, for raked floors)" },
                 { value: "5", label: "5 degrees" },
                 { value: "8", label: "8 degrees" },
@@ -177,6 +178,11 @@ export default function SettingsModal({ opened, onClose, onHelp }) {
               <Tg id="cbExportKeepsExcluded" defaultChecked label="Keep exclude-region points in the export"
                 helpAnchor="cbExportKeepsExcluded" onHelp={onHelp}
                 title="On: points inside your exclude regions are left out of alignment only and still exported. Off: they are left out of the export too. Points removed in review are never exported." />
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <Tg id="cbExportRefine" label="Tighten the export with my links"
+                helpAnchor="cbExportRefine" onHelp={onHelp}
+                title="Off by default: the export puts every scan exactly where the layout has it. On: before merging, each scan in a link is fine-tuned against the first scan of that link, and kept only if that moves its points less than 50 cm. The export is still every point; your saved layout is not changed." />
             </div>
             <div style={{ marginTop: 12 }}>
               <Tg id="cbLandmarksInDrawings" defaultChecked label="Named landmarks in the drawings"

@@ -30,7 +30,7 @@ export const SETTINGS_HELP = [
  {
   anchor: "levelTilt",
   heading: "Levelling: largest floor tilt to straighten",
-  html: "When a scan is levelled to its own floor (a one-time step when its preview is built), this is the steepest floor the tool will accept as 'the floor' at all. Raked seating and sloped floors in real venues measured between about 2 and 8 degrees. Lower this (3 is the strict end) if a ramp, a raked section, or a stage lip is being mistaken for the floor and levelled flat when it should stay sloped; raise it only if a genuinely steep real floor is being rejected outright. Takes effect the next time previews are built (File &gt; Rebuild previews) - changing it does not touch a scan already loaded."
+  html: "When a scan is levelled to its own floor (a one-time step when its preview is built), this is the steepest floor the tool will accept as 'the floor' at all. Raked seating and sloped floors in real venues measured between about 2 and 8 degrees. Lower this (3 is the strict end) if a ramp, a raked section, or a stage lip is being mistaken for the floor and levelled flat when it should stay sloped; raise it only if a genuinely steep real floor is being rejected outright. Takes effect the next time previews are built (File &gt; Rebuild previews) - changing it does not touch a scan already loaded.<br><br><b>Off</b> does not level any scan to its floor: every scan keeps the level the iPhone recorded when it was scanned. Use it for a venue whose floors are raked or sloped everywhere, where straightening each scan to its own patch of floor would tip correctly levelled scans by a different amount each. The floor height is still found, so heights still read from the floor. To do this for one scan only, tick \"keep the iPhone's level\" in that scan's review bar."
  },
  {
   anchor: "rangeLimit",
@@ -81,6 +81,11 @@ export const SETTINGS_HELP = [
   anchor: "strayRemoval",
   heading: "Remove stray points from the export",
   html: "Off by default: the export keeps every point and every colour exactly as scanned, on the standing rule that reduction is your call and best done in Vectorworks, where you can see what is actually being thrown away before it goes. Turning this on drops isolated points (people caught mid-scan, glints, reflections) that sit far from any neighbour, at export time only - it never touches the saved placement or any preview. Gentle drops only the most isolated points; Strong drops more, more aggressively."
+ },
+ {
+  anchor: "cbExportRefine",
+  heading: "Tighten the export with my links",
+  html: "Off by default, and with it off the export puts every scan exactly where your layout has it. With it on, the export first fine-tunes the scans you linked: in each link, every other scan is matched against the first scan listed in that link (whole scans, at the same working resolution alignment uses), and the small correction is kept only if it moves that scan's points less than 50 cm; otherwise the scan stays where you placed it. A scan is adjusted at most once, by the first link that lists it. The merged file is still every point at full resolution with its colour, and your saved layout is never changed by this. The export's report lists each link it tried, how well it fit, and whether it was used."
  },
  {
   anchor: "cbExportKeepsExcluded",

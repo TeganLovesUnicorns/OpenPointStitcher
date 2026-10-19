@@ -281,7 +281,9 @@ def _record_as_imported(data: dict, scan: dict) -> None:
 def _apply_process_settings(settings: dict) -> None:
     """Make the project's levelling tilt limit the process default, so previews and alignments use it."""
     try:
-        align_gravity.set_default_max_tilt(float(settings.get("level_tilt_deg", 15.0)))
+        tilt = float(settings.get("level_tilt_deg", 15.0))
+        if tilt != 0:                       # 0: no scan is levelled to its floor; previews handle that themselves
+            align_gravity.set_default_max_tilt(tilt)
     except (TypeError, ValueError):
         log.warning("ignoring an unusable levelling tilt setting: %r", settings.get("level_tilt_deg"))
 
@@ -473,7 +475,12 @@ def _write_placement_merged(out_dir: str, apply, backup_first: bool = True) -> d
     return fresh
 
 
-_SERVER_OWNED_KEYS = ("settings", "last_run")   # the page never sends these
+_SERVER_OWNED_KEYS = ("settings", "last_run", "excluded_pairs")   # the page never sends these
+
+
+def _project_excluded_pairs(data: dict) -> frozenset:
+    """The scan pairs this project never tries to match, from its file's "excluded_pairs" list of [name, name]."""
+    return frozenset(frozenset(pair) for pair in data.get("excluded_pairs", []) if len(set(pair)) == 2)
 
 
 def _write_whole_placement(out_dir: str, data: dict) -> dict:
@@ -605,6 +612,7 @@ def _run_align(app: "App", job_id: str, params: dict) -> None:
     with cap:
         result = align_from_anchors(app.payloads, poses, anchors, locked, subset_set,
                                     scans_folder=app.scans_dir, max_shift_m=max_shift,
+                                    reference_scan=params.get("reference_scan") or data.get("reference_scan"),
                                     progress_cb=progress_cb,
                                     should_cancel=lambda: app.jobs.is_cancel_requested(job_id))
 
@@ -689,6 +697,13 @@ def _yaw_and_translation_only(transform: np.ndarray) -> np.ndarray:
     return yaw_transform(yaw_of(transform), transform[:3, 3])
 
 
+def _pick_root(largest: list[int], names: list[str], reference: Optional[str]) -> int:
+    """The scan a run is pinned to: the reference scan when it is in the joined-up group, else that group's first."""
+    if reference in names and names.index(reference) in largest:
+        return names.index(reference)
+    return largest[0]
+
+
 def _layout_bound_check(seed_shifts_m: dict[str, float], bound_mean_m: float) -> tuple[bool, float]:
     """Whole-layout bound: the mean seed-relative shift of every candidate scan this run, and whether it clears
     bound_mean_m. Zeros count."""
@@ -723,10 +738,8 @@ class LimitOutcome:
 
 def _limit_moves(checks: list[MoveCheck], bound_m: float, bound_deg: float, layout_bound_m: float,
                  relative: bool) -> LimitOutcome:
-    """Apply the per-scan and whole-layout limits. relative=False measures each move from where the scan started;
-    relative=True first removes the turn and shift the whole layout made together, so only scans moving against
-    each other count. A refused scan then keeps its place in the moved layout, and a fixed scan (anchor or locked)
-    out of step with the rest declines the whole run, since it cannot be carried."""
+    """Per-scan and whole-layout limits. relative=True first removes the turn and shift all scans made together; a
+    refused scan is then carried with the layout, and a fixed scan out of step declines the run."""
     measured = "against the other scans" if relative else "from where it started"
     final = {c.name: c.proposed for c in checks}
     shifts, capped, rejected = {}, set(), []
@@ -816,16 +829,23 @@ def _reprocessed_exclusions(saved: dict, name: str, key: str = "exclusions") -> 
     return [Exclusion.from_dict(e) for e in saved.get(key, []) if e.get("scan") == name and e["id"] in ids] or None
 
 
+def _preview_options_for(saved: dict) -> dict:
+    """The preview options a project file asks for: its settings plus the scans that keep the scanner's level."""
+    return build_bench.preview_options(saved.get("settings", {}),
+                                       [s["name"] for s in saved.get("scans", []) if s.get("keep_scanner_level")])
+
+
 def _freeze_wall_edits(out_dir: str, saved: dict, paths: dict, cache_dir: str) -> dict:
     """Freeze hand wall edits made on an older wall finder's walls (wall_checks.frozen) before the preview is rebuilt,
     so the user's walls come back exactly. Returns the placement as written, or saved unchanged."""
+    options = _preview_options_for(saved)
     frozen = {}
     for s in saved.get("scans", []):
         edits = s.get("wall_edits") or []
         if not edits or edits[0].get("op") == "set" or s["name"] not in paths:
             continue
         _, cpath = build_bench._cache_key_and_path(paths[s["name"]], cache_dir, _reprocessed_exclusions(saved, s["name"]),
-                                                   _reprocessed_exclusions(saved, s["name"], "stairs"))
+                                                   _reprocessed_exclusions(saved, s["name"], "stairs"), options)
         try:
             with open(cpath) as fh:
                 cached = json.load(fh)
@@ -1017,6 +1037,12 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                 loaded = json.load(fh)
             cfg_kwargs["proposals"] = {k: v["transform"] for k, v in loaded.items()}
             cfg_kwargs["proposal_agree"] = {k: int(v.get("agree", 0)) for k, v in loaded.items()}
+        cfg_kwargs["excluded_pairs"] = _project_excluded_pairs(data)
+        # The reference scan (top of the page's list) is the one the solve holds still and the result is pinned to.
+        reference_scan = params.get("reference_scan") or data.get("reference_scan")
+        scan_names = [sc.name for sc in scans]
+        if reference_scan in scan_names:
+            cfg_kwargs["posegraph_reference_node"] = scan_names.index(reference_scan)
         cfg = PipelineConfig(**cfg_kwargs)
         # Each with needs a fresh limited_to() (one-shot), and the cap must not wrap the concurrent pairwise stage
         # or it deadlocks.
@@ -1181,7 +1207,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
         largest_set = set(largest)
         unregistered = [scans[i].name for i in range(len(scans)) if i not in largest_set]
 
-        root_idx = largest[0]
+        root_idx = _pick_root(largest, scan_names, reference_scan)
         root_name = scans[root_idx].name
         root_target = placements[root_name].matrix() if root_name in placements else np.eye(4)
         # Rigid whole-shape correction so the root scan lands exactly on its current placed pose. The root's own
@@ -1298,7 +1324,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                 # runaway moves. Matches _run_align's job-level default.
                 anchor_result = align_from_anchors(
                     app.payloads, anchor_poses, stage2_anchors, anchor_locked, None,
-                    scans_folder=app.scans_dir, max_shift_m=1.0,
+                    scans_folder=app.scans_dir, max_shift_m=1.0, reference_scan=root_name,
                     progress_cb=lambda done, total: app.jobs.set_progress(
                         job_id, "applying your links", f"{done}/{total} anchor(s)"),
                     should_cancel=lambda: app.jobs.is_cancel_requested(job_id))
@@ -1452,6 +1478,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
             "limits_measured": "against the other scans" if limits_relative else "from where each scan started",
             "rejected_corrections": limit_outcome.rejected if limit_outcome else [],
             "layout_common_move": limit_outcome.common if limit_outcome else None,
+            "reference_scan": root_name,         # the scan this run was pinned to
         }
         _write_align_auto_report(app.out_dir, result)
         app.jobs.finish(job_id, result)
@@ -1926,7 +1953,26 @@ class App:
     def preview_options(self) -> dict:
         """The project's preview settings, read from its file each time so a changed setting reaches the next build in
         its worker process."""
-        return build_bench.preview_options((_read_placement(self.out_dir) or {}).get("settings", {}))
+        return _preview_options_for(_read_placement(self.out_dir) or {})
+
+    def rebuild(self, name: str) -> dict:
+        """Rebuild one scan's preview with the project's current settings (for example after its levelling switch
+        changed), keeping its re-processed state as it is."""
+        if name not in self._paths:
+            raise KeyError(name)
+        self.build_events[name].wait()
+        saved = _read_placement(self.out_dir) or {}
+        before = self.payloads.get(name) or {}
+        payload, _ = self._preview_pool.submit(build_bench.build_scan_payload_cached, self._paths[name],
+                                               self._cache_dir, _reprocessed_exclusions(saved, name),
+                                               _reprocessed_exclusions(saved, name, "stairs"),
+                                               self.preview_options()).result()
+        with self._lock:
+            self.payloads[name] = payload
+        with self._tilt_lock:
+            self._tilt_inputs.pop(name, None)      # its levelling may have changed
+        return {"name": name, "tilt_before": before.get("tilt"), "tilt": payload.get("tilt"),
+                "levelled_to_floor": not np.allclose(payload["level_rotation"], np.eye(3))}
 
     def floors_ceilings(self, name: str) -> Optional[list]:
         """This scan's floor and ceiling pieces (computed in a worker process the first time, then read from the cache).
@@ -2290,6 +2336,19 @@ def make_handler(session: Session):
                     name = urllib.parse.unquote(path[len("/api/scans/"):-len("/reprocess")])
                     try:
                         self._json(200, app.reprocess(name))
+                    except KeyError:
+                        self._json(404, {"error": f"no scan named {name!r} in this project"})
+                elif path.startswith("/api/scans/") and path.endswith("/rebuild"):
+                    # Rebuild one scan's preview with the project's current settings (its levelling switch).
+                    app = self._open_app()
+                    if app is None:
+                        return
+                    if app.jobs.any_running():
+                        self._json(409, {"error": "a run is in progress; change this scan's levelling when it has finished"})
+                        return
+                    name = urllib.parse.unquote(path[len("/api/scans/"):-len("/rebuild")])
+                    try:
+                        self._json(200, app.rebuild(name))
                     except KeyError:
                         self._json(404, {"error": f"no scan named {name!r} in this project"})
                 elif path.startswith("/api/projects/") and path.endswith("/upload"):

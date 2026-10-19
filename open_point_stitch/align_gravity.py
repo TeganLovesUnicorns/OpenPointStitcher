@@ -38,6 +38,13 @@ class LevelInfo:
     reliable: bool            # False when no convincing horizontal plane was found
 
 
+def as_scanner_level(level: LevelInfo) -> LevelInfo:
+    """level without its turn: the scan keeps the level the scanner recorded. floor_z becomes the found floor's height
+    straight below the scan's origin, and tilt_deg still says how far that floor is off level."""
+    normal_raw = level.rotation.T @ np.array([0.0, 0.0, 1.0])
+    return LevelInfo(np.eye(3), level.tilt_deg, float(level.floor_z / normal_raw[2]), level.inliers, level.reliable)
+
+
 @dataclass
 class YawCandidate:
     yaw_deg: float

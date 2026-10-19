@@ -567,6 +567,51 @@ def test_midair_trust_still_recovers_a_known_shift():
     assert np.allclose(got[:3, 3], [0.15, -0.1, 0.0], atol=0.02), got[:3, 3]
 
 
+def _refine_stage_keeps(stage: str) -> tuple:
+    """Run a seeded pair with one refine stage on, where that stage hands back a pose with one cloud sunk 1.25 m into
+    the other and raw fitness is made to prefer it (what nesting does). Returns (result, the nested pose)."""
+    import types
+    from open_point_stitch import align_pair
+    rng = np.random.default_rng(13)
+    local = _room_points(rng)
+    a = Scan(name="A", path="A.pts", points=local)
+    b = Scan(name="B", path="B.pts", points=local.copy())
+    cfg = PipelineConfig(use_colored_icp=stage == "colour", full_res_refine=stage == "full")
+    prep_a, prep_b = preprocess_scan(a, 0, cfg), preprocess_scan(b, 1, cfg)
+    wrong = np.eye(4)
+    wrong[0, 3] = 0.25
+    nested = np.eye(4)
+    nested[2, 3] = -1.25
+    real_score, real_colour, real_full = align_pair._score, align_pair.colored_refine, align_pair.full_res_refine
+
+    def score(src, tgt, init, cfg_, local_only=False):
+        if np.allclose(init, nested):
+            return nested.copy(), 1.0, 0.01, 5000           # raw fitness says the nested pose is best
+        return real_score(src, tgt, init, cfg_, local_only=local_only)
+
+    align_pair._score = score
+    align_pair.colored_refine = lambda *args, **kw: types.SimpleNamespace(transformation=nested.copy())
+    align_pair.full_res_refine = lambda *args, **kw: nested.copy()
+    try:
+        result = register_pair(prep_a, prep_b, cfg, init=wrong, seeded_from="manual", src_scan=a, tgt_scan=b,
+                               local_only=True)
+    finally:
+        align_pair._score, align_pair.colored_refine, align_pair.full_res_refine = real_score, real_colour, real_full
+    return result, nested
+
+
+def test_a_colour_refine_that_nests_one_cloud_inside_the_other_is_not_kept():
+    result, nested = _refine_stage_keeps("colour")
+    assert not np.allclose(result.transform, nested), "kept a nested pose because raw fitness preferred it"
+    assert not result.method.startswith("colored"), result.method
+
+
+def test_a_full_resolution_refine_that_nests_one_cloud_inside_the_other_is_not_kept():
+    result, nested = _refine_stage_keeps("full")
+    assert not np.allclose(result.transform, nested), "kept a nested pose because raw fitness preferred it"
+    assert not result.method.endswith("+full_res"), result.method
+
+
 if __name__ == "__main__":
     from support import run_tests
     raise SystemExit(run_tests(globals()))

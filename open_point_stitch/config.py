@@ -66,11 +66,8 @@ class PipelineConfig:
     overlap_gate_min_frac: float = 0.05      # smaller of the two directions, at or above 5%
 
     # Pairs always rejected regardless of score, for pairs scoring cannot tell right from wrong. Each entry is a
-    # frozenset of two scan names.
-    excluded_pairs: frozenset = field(default_factory=lambda: frozenset([
-        frozenset(("Point Cloud 2026-08-26 HR Aisle 2", "Point Cloud 2026-08-26 green room")),
-        frozenset(("Point Cloud 2026-08-26 green room", "Point Cloud 2026-08-26 stage")),
-    ]))
+    # frozenset of two scan names; a project sets its own in its file ("excluded_pairs").
+    excluded_pairs: frozenset = field(default_factory=frozenset)
 
     # Local search around a hand-placed seed: the seed is one candidate plus this many sampled nearby, all ranked
     # with the unseeded path's own candidates.

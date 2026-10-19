@@ -73,6 +73,23 @@ def test_previews_built_under_one_tilt_limit_are_not_reused_under_another():
     assert a != b and a["level_tilt_deg"] == 15.0 and b["level_tilt_deg"] == 3.0
 
 
+def test_levelling_off_leaves_the_process_default_where_it_was():
+    from open_point_stitch.server import _apply_process_settings
+    set_default_max_tilt(15.0)
+    _apply_process_settings({"level_tilt_deg": 0})
+    assert align_gravity.DEFAULT_MAX_TILT_DEG == 15.0
+
+
+def test_scanner_level_keeps_the_floor_height_and_slope_but_no_turn():
+    from open_point_stitch.align_gravity import as_scanner_level
+    pcd = _tilted_floor(2.0)
+    pcd.translate((0.0, 0.0, -1.3))
+    level = estimate_level(pcd)
+    kept = as_scanner_level(level)
+    assert np.allclose(kept.rotation, np.eye(3)) and kept.tilt_deg == level.tilt_deg and kept.reliable == level.reliable
+    assert abs(kept.floor_z - (-1.3)) < 0.02, kept.floor_z
+
+
 def _two_clusters():
     rng = np.random.default_rng(3)
     near = np.column_stack([rng.uniform(-3, 3, 4000), rng.uniform(-3, 3, 4000), rng.uniform(0, 2, 4000)])

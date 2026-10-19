@@ -48,13 +48,16 @@ function ScanRow({ s, pos, renaming, setRenaming, dragPos }) {
         if (dragPos.current === null || dragPos.current === pos) return;
         const moved = drawOrder.splice(dragPos.current, 1)[0];
         drawOrder.splice(pos, 0, moved);
+        if (pos === 0 || dragPos.current === 0) referenceChosen = true;   // the top changed: the user chose a reference
         dragPos.current = null;
         renderAll();
       }}
     >
       <div className="sw" style={{ background: `rgb(${s.col})` }} />
       <div className="nm">
-        {pos === 0 && <span title="reference: everything aligns relative to this one">&#9733; </span>}
+        {pos === 0 && <span title={referenceChosen
+          ? "reference: every run keeps this scan still and aligns the rest to it. Drag another scan to the top to change it"
+          : "reference: runs keep this scan (the first by name) still. Drag another scan to the top to choose your own"}>&#9733; </span>}
         {renaming === s.i ? (
           <TextInput
             autoFocus
