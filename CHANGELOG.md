@@ -3,6 +3,18 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.51.0 (2026-10-19)
+
+- New setting, off by default: movement limits can ignore the whole layout moving together, so only scans moving
+  against each other count. Every correction a limit refuses is now listed in the run report.
+- A scan can keep the level the iPhone recorded instead of being levelled to its floor (review bar), and the
+  Levelling setting has an "Off" choice for a whole project, for raked and sloped floors.
+- The scan dragged to the top of the list is the reference that runs keep still; until one is chosen, runs behave
+  as before.
+- Scan pairs never to be matched are set per project, not in the shipped settings.
+- The optional colour and full-resolution refine steps keep a change only if surface fit agrees.
+- Export can tighten the merge with your links (Settings, Exporting; off by default).
+
 ## 0.50.4 (2026-10-18)
 
 - The run summary, log messages, command help and test messages no longer refer to internal development notes.

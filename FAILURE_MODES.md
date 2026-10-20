@@ -32,9 +32,11 @@ Mirrors reflect the scan into a phantom room behind them; glass returns nothing 
 ### Raked seating and sloped floors
 
 Levelling finds the floor, and a raked floor is not level. The levelling tilt limit (Settings, Preparing scans)
-stops a rake from tipping a whole scan; keep it small for raked houses.
+stops a steep rake from tipping a whole scan; keep it small for raked houses. A gentle rake sits under any limit, so
+a scan standing mostly on it can be told to keep the level the device recorded ("keep the iPhone's level" in its
+review bar), or Levelling can be set to Off for the whole project.
 
-- **Notice it:** a scan's suggested tilt is several degrees, and rooms refuse to join.
+- **Notice it:** a scan's suggested tilt is several degrees, its walls lean, and rooms refuse to join.
 
 ### Balconies, mezzanines and split levels
 
