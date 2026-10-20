@@ -76,19 +76,22 @@ class PipelineConfig:
     local_search_height_m: float = 0.3   # z jitter - height is usually the most trustworthy axis
     local_search_yaw_deg: float = 5.0    # yaw jitter, uniform in [-y, y] degrees
 
-    # "Run from my alignment": a candidate further than this from the placement it was seeded from cannot win.
+    # "Run from my alignment": the radius pairs are chosen within (shared surface), and the per-scan limit's fallback.
     local_only_bound_m: float = 0.5
     local_only_bound_deg: float = 5.0
+    # A candidate further than this from the placement it was seeded from cannot win. Wider lets wrong answers win.
+    candidate_bound_m: float = 0.5
+    candidate_bound_deg: float = 5.0
     # Mean shift over every scan searched; above it the whole run's geometry search is declined.
-    local_only_layout_bound_mean_m: float = 0.20
+    local_only_layout_bound_mean_m: float = 1.0
     # Outside proposals (seed_key -> 4x4 raw source to raw target) that join a seeded pair's candidates when
     # within the placement gate, and a wider per-scan bound for them. Not set by the bench.
     proposals: dict = field(default_factory=dict)
     proposal_agree: dict = field(default_factory=dict)   # seed_key -> how many of the proposer's matches agreed
     proposal_gate_m: float = 1.5
     proposal_gate_deg: float = 15.0
-    scan_bound_m: Optional[float] = None
-    scan_bound_deg: Optional[float] = None
+    scan_bound_m: Optional[float] = 1.5
+    scan_bound_deg: Optional[float] = 15.0
 
     # Coarse-to-fine ICP windows for seeded runs, as multiples of voxel_size.
     local_only_icp_distance_mults: tuple = (6.0, 2.0, 0.8, 0.4)

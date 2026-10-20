@@ -75,7 +75,22 @@ export const SETTINGS_HELP = [
  {
   anchor: "cbLimitsRelative",
   heading: "Movement limits ignore the whole layout moving together",
-  html: "\"Run from my alignment\" has two brakes: no scan may move more than 50 cm or 5 degrees from where the run started, and the scans together may not move more than 20 cm on average, or the whole run is declined. With this off (the default) every move counts from where the scan started, so a run whose answer is the whole layout sliding over by 30 cm as one piece trips both brakes, even though no wall, floor or doorway moved against another. With this on, the run first takes out the slide and turn the scans made all together, and the brakes only count what is left: scans moving against each other. A scan the brake refuses keeps its place in the layout instead of jumping back to its old spot. If the reference scan (top of the list) or a locked scan ends up out of step with the rest, the whole run is declined, since those cannot move. Every refused correction is listed in the run report with which brake refused it, how big it was and how well it fit. The numbers themselves do not change."
+  html: "\"Run from my alignment\" has two brakes (set under Movement limits): no scan may move more than its limit from where the run started, and the scans together may not move more than the layout limit on average, or the whole run is declined. With this off (the default) every move counts from where the scan started, so a run whose answer is the whole layout sliding over by 30 cm as one piece trips both brakes, even though no wall, floor or doorway moved against another. With this on, the run first takes out the slide and turn the scans made all together, and the brakes only count what is left: scans moving against each other. A scan the brake refuses keeps its place in the layout instead of jumping back to its old spot. If the reference scan (top of the list) or a locked scan ends up out of step with the rest, the whole run is declined, since those cannot move. Every refused correction is listed in the run report with which brake refused it, how big it was and how well it fit. The numbers themselves do not change."
+ },
+ {
+  anchor: "moveLimits",
+  heading: "Movement limits (Run from my alignment)",
+  html: "How far one run may move things. Per scan: how far a scan may move and turn from where the run started; a scan over it stays where you put it. Layout: how far all the scans may move on average; over it, the whole run is declined. The default, 1.5 m and 15 degrees per scan and 1 m for the layout, measured best on both test venues: the strict 50 cm setting threw away most good corrections. With \"Keep back a move that makes a good match worse\" on, the wider limits do not let a scan wreck its neighbours."
+ },
+ {
+  anchor: "cbCollateralGuard",
+  heading: "Keep back a move that makes a good match worse",
+  html: "On by default. After a run, the tool checks every scan it moved against all its neighbours. If the move made a match that was good before clearly worse, that scan is put back where it was, the check is repeated until no moved scan hurts a good match, and each move kept back is listed as a suggestion with what it would have done. This is what stops one scan lining up with another at the cost of a third."
+ },
+ {
+  anchor: "linksMaxShift",
+  heading: "Largest move a link may make",
+  html: "Applies to the Links button and to links used by a run. A link is judged on three things together: how well the two boxes fit, whether the answer stays level, and how far it moves the scan. A link that fits poorly or tips the scan is refused whatever the distance; this setting is the distance part. The default is 1.5 m. Strict (1 m) refuses more links when scans start well out; wide (3 m or more) lets the linked spots meet but can pull the rest of the layout out of place."
  },
  {
   anchor: "strayRemoval",

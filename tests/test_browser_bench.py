@@ -4578,6 +4578,52 @@ def test_relative_movement_limits_are_off_by_default_and_reach_the_run(page):
     print("    off by default, ticking reached the server and the run (no reference chosen, none sent), put back off")
 
 
+def test_movement_limits_guard_and_link_distance_have_their_defaults_save_and_reach_both_runs(page):
+    """Settings > Aligning: Movement limits (1.5 m / 15 deg / 1 m), the guard (on) and the largest link move (1.5 m)
+    are the defaults; changed, they are saved and sent with Run from my alignment and with the Links button. The
+    server's answer to both runs is faked."""
+    _goto(page)
+    sent = []
+    page.route("**/api/jobs", lambda route: (sent.append(route.request.post_data_json),
+                                             route.fulfill(status=500, json={"error": "faked for the test"}))
+               if route.request.method == "POST" else route.continue_())
+    page.locator('.menubtn[data-menu="menuSettings"]').click()
+    page.locator('button[role="tab"]:has-text("Aligning")').click()
+    assert page.locator("#moveLimits").input_value() == "1.5|15|1", page.locator("#moveLimits").input_value()
+    assert page.locator("#cbCollateralGuard").is_checked(), "the guard should be on by default"
+    assert page.locator("#linksMaxShift").input_value() == "1.5", page.locator("#linksMaxShift").input_value()
+    page.locator("#moveLimits").select_option("0.5|5|0.2")
+    page.locator("#cbCollateralGuard").uncheck()
+    page.locator("#linksMaxShift").select_option("1")
+    try:
+        got = _saved_settings(page, move_limits="0.5|5|0.2", collateral_guard=False, links_max_shift_m=1)
+        assert got.get("move_limits") == "0.5|5|0.2" and got.get("collateral_guard") is False, got
+        page.keyboard.press("Escape")
+        _pick_run(page, "align_auto_seeded")
+        _press_run(page)
+        page.wait_for_function("() => document.getElementById('out').value.includes('AUTOMATIC ALIGN FAILED')",
+                               timeout=60_000)
+        run = sent[-1]
+        assert (run.get("scan_bound_m"), run.get("scan_bound_deg"), run.get("layout_bound_mean_m"),
+                run.get("collateral_guard"), run.get("max_shift_m")) == (0.5, 5, 0.2, False, 1), \
+            f"the run was not told the settings: {run}"
+        page.evaluate("() => { document.getElementById('out').value = ''; }")
+        _pick_run(page, "align")
+        _press_run(page)
+        page.wait_for_function("() => document.getElementById('out').value.includes('ALIGN FAILED')", timeout=60_000)
+        assert sent[-1].get("kind") == "align" and sent[-1].get("max_shift_m") == 1, sent[-1]
+    finally:
+        page.unroute("**/api/jobs")
+        page.locator('.menubtn[data-menu="menuSettings"]').click()
+        page.locator('button[role="tab"]:has-text("Aligning")').click()
+        page.locator("#moveLimits").select_option("1.5|15|1")
+        page.locator("#cbCollateralGuard").check()
+        page.locator("#linksMaxShift").select_option("1.5")
+        _saved_settings(page, move_limits="1.5|15|1", collateral_guard=True, links_max_shift_m=1.5)
+        page.keyboard.press("Escape")
+    print("    defaults 1.5 m / 15 deg / 1 m, guard on, links 1.5 m; changed values saved and sent with both runs, put back")
+
+
 def test_export_tightened_with_links_is_off_by_default_and_reaches_the_export(page):
     """Settings > Exporting > Tighten the export with my links: off by default, saved, and sent as refine with File >
     Export; the export's per-link lines are reported. The server's answer is faked."""
@@ -4933,6 +4979,7 @@ TESTS = [
     test_run_from_alignment_using_links_too_starts_with_the_right_params,  # cancels its own job; must not leave one running before the next test
     test_height_settle_setting_is_on_by_default_and_reaches_the_run,  # cancels its own job too
     test_relative_movement_limits_are_off_by_default_and_reach_the_run,  # cancels its own job
+    test_movement_limits_guard_and_link_distance_have_their_defaults_save_and_reach_both_runs,
     test_automatic_align_starts,  # LAST: leaves a real job running server-side, see its own docstring
 ]
 

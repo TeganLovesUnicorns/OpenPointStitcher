@@ -835,7 +835,7 @@ def register_pair(
             if origin == "proposer":
                 if not _within_proposal_gate(init, transform, cfg):
                     return "bound", None, None
-            elif d_m > cfg.local_only_bound_m or d_deg > cfg.local_only_bound_deg:
+            elif d_m > cfg.candidate_bound_m or d_deg > cfg.candidate_bound_deg:
                 return "bound", None, None
         verdict = _verify.score_candidate_fast(src.down, tgt.down, target_nns, transform, cfg, origin=origin,
                                                **judge_w)
@@ -911,7 +911,7 @@ def register_pair(
         log.info("%s -> %s: %d local candidate(s) discarded, further than "
                   "%.2fm/%.1fdeg from the placement",
                   src.name, tgt.name, rejected_for_bound,
-                  cfg.local_only_bound_m, cfg.local_only_bound_deg)
+                  cfg.candidate_bound_m, cfg.candidate_bound_deg)
 
     if best is None:
         if local_only and (seed_baseline is not None or seed_outcome is not None):

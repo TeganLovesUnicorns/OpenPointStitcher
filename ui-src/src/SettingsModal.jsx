@@ -153,8 +153,40 @@ export default function SettingsModal({ opened, onClose, onHelp }) {
             <div style={{ marginTop: 10 }}>
               <Tg id="cbLimitsRelative" label="Movement limits ignore the whole layout moving together"
                 helpAnchor="cbLimitsRelative" onHelp={onHelp}
-                title="Off by default. On: the limits on how far a run may move each scan (50 cm and 5 degrees) and the whole layout (20 cm on average) only count scans moving against each other, so the layout sliding or turning as one piece reads as no movement. Off: every move counts from where the scan started." />
+                title="Off by default. On: the movement limits below only count scans moving against each other, so the layout sliding or turning as one piece reads as no movement. Off: every move counts from where the scan started." />
             </div>
+            <NativeSelect
+              id="moveLimits"
+              size="xs"
+              mt={10}
+              label={selLabel("Movement limits (Run from my alignment)", "moveLimits", onHelp)}
+              defaultValue="1.5|15|1"
+              title="How far one run may move each scan, and the whole layout on average, before the move is refused. A refused scan stays where you put it; past the layout limit the whole run is declined."
+              data={[
+                { value: "1.5|15|1", label: "1.5 m and 15 degrees per scan, 1 m for the layout" },
+                { value: "0.5|5|0.2", label: "50 cm and 5 degrees per scan, 20 cm for the layout (strict)" },
+                { value: "3|30|2", label: "3 m and 30 degrees per scan, 2 m for the layout (wide)" },
+              ]}
+            />
+            <div style={{ marginTop: 10 }}>
+              <Tg id="cbCollateralGuard" defaultChecked label="Keep back a move that makes a good match worse"
+                helpAnchor="cbCollateralGuard" onHelp={onHelp}
+                title="On by default. After a run, a scan whose new position makes a good match with another scan worse is put back where it was, and its move is listed as a suggestion with what it would have done." />
+            </div>
+            <NativeSelect
+              id="linksMaxShift"
+              size="xs"
+              mt={10}
+              label={selLabel("Largest move a link may make", "linksMaxShift", onHelp)}
+              defaultValue="1.5"
+              title="Links button, and links used by a run: a link whose answer fits well and stays level is still refused if it would move a scan further than this."
+              data={[
+                { value: "1.5", label: "1.5 m" },
+                { value: "1", label: "1 m (strict)" },
+                { value: "3", label: "3 m" },
+                { value: "8", label: "8 m (wide)" },
+              ]}
+            />
           </Pad>
         </Tabs.Panel>
 

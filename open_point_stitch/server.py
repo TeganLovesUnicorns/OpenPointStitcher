@@ -478,6 +478,10 @@ def _write_placement_merged(out_dir: str, apply, backup_first: bool = True) -> d
 _SERVER_OWNED_KEYS = ("settings", "last_run", "excluded_pairs")   # the page never sends these
 
 
+# How far a link may move a scan (Links button, and links as a run's second stage) unless the page says.
+LINKS_MAX_SHIFT_M = 1.5
+
+
 def _project_excluded_pairs(data: dict) -> frozenset:
     """The scan pairs this project never tries to match, from its file's "excluded_pairs" list of [name, name]."""
     return frozenset(frozenset(pair) for pair in data.get("excluded_pairs", []) if len(set(pair)) == 2)
@@ -589,7 +593,7 @@ def _run_align(app: "App", job_id: str, params: dict) -> None:
     # align runs on the browser-preview point clouds, a few thousand
     # points per scan, which is not the workload the GPU tensor path
     # (open_point_stitch/align_gpu.py) was built for. Not wired up.
-    max_shift = float(params.get("max_shift_m", 1.0))
+    max_shift = float(params.get("max_shift_m", LINKS_MAX_SHIFT_M))
 
     poses = {}
     locked = {}
@@ -806,6 +810,7 @@ def _limit_moves(checks: list[MoveCheck], bound_m: float, bound_deg: float, layo
 _SEARCH_KNOBS = {"local_search_n": int, "local_search_radius_m": float, "local_search_yaw_deg": float,
                  "local_search_height_m": float, "local_only_bound_m": float, "local_only_bound_deg": float,
                  "min_improvement_frac": float, "scan_bound_m": float, "scan_bound_deg": float,
+                 "candidate_bound_m": float, "candidate_bound_deg": float,
                  "proposal_gate_m": float, "proposal_gate_deg": float}
 
 
@@ -1320,11 +1325,11 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                     u = pose_updates.get(s["name"], {})
                     anchor_poses[s["name"]] = ScanPose.from_dict({**s, **u}, strict=True)
                     anchor_locked[s["name"]] = bool(s.get("locked", False))
-                # max_shift_m=1.0 rather than the 8.0 default: this refines an already-seeded position, and 8.0 allowed
-                # runaway moves. Matches _run_align's job-level default.
+                # Not the library's 8 m default: this refines an already-seeded position, and 8 m allowed runaway moves.
                 anchor_result = align_from_anchors(
                     app.payloads, anchor_poses, stage2_anchors, anchor_locked, None,
-                    scans_folder=app.scans_dir, max_shift_m=1.0, reference_scan=root_name,
+                    scans_folder=app.scans_dir, max_shift_m=float(params.get("max_shift_m", LINKS_MAX_SHIFT_M)),
+                    reference_scan=root_name,
                     progress_cb=lambda done, total: app.jobs.set_progress(
                         job_id, "applying your links", f"{done}/{total} anchor(s)"),
                     should_cancel=lambda: app.jobs.is_cancel_requested(job_id))
@@ -1386,7 +1391,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
         marks.append(("height settle", time.time()))
         app.jobs.set_progress(job_id, "explaining each move", "")
         move_report = _explain_run_moves(placements, pose_updates, prepared, results,
-                                         bool(params.get("collateral_guard", False)))
+                                         bool(params.get("collateral_guard", True)))
         for name in move_report["kept_back"]:
             s = by_name[name]
             pose_updates[name] = {**pose_updates[name], "yaw_deg": s["yaw_deg"], "x_m": s["x_m"],

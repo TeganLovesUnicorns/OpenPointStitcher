@@ -453,21 +453,22 @@ def test_an_outside_proposal_near_the_placement_can_pull_a_rough_seed_in_and_a_f
     """Outside proposals join a seeded pair's candidates."""
     rng = np.random.default_rng(15)
     local = _room_points(rng, n=4000)
-    shift = np.array([0.9, -0.6, 0.0])                    # 1.08 m: beyond the 0.5 m local bound
-    cfg = PipelineConfig()
+    shift = np.array([0.9, -0.6, 0.0])                    # 1.08 m: beyond the strict 0.5 m bound
+    strict = dict(candidate_bound_m=0.5, candidate_bound_deg=5.0)
+    cfg = PipelineConfig(**strict)
     a = preprocess_scan(Scan(name="A", path="A.pts", points=local), 0, cfg)
     b = preprocess_scan(Scan(name="B", path="B.pts", points=local + shift), 1, cfg)
     near = np.eye(4)
     near[:3, 3] = shift + [0.04, -0.03, 0.0]
     without = register_pair(a, b, cfg, init=np.eye(4), seeded_from="manual", local_only=True)
     assert np.linalg.norm(without.transform[:3, 3] - shift) > 0.3, without.transform[:3, 3]
-    with_prop = register_pair(a, b, PipelineConfig(proposals={"B|A": np.linalg.inv(near).tolist()}),
+    with_prop = register_pair(a, b, PipelineConfig(proposals={"B|A": np.linalg.inv(near).tolist()}, **strict),
                               init=np.eye(4), seeded_from="manual", local_only=True)
     assert np.allclose(with_prop.transform[:3, 3], shift, atol=0.02), with_prop.transform[:3, 3]
     assert with_prop.seeded_from == "proposer", with_prop.seeded_from
     far = np.eye(4)
     far[:3, 3] = [3.0, 0.0, 0.0]
-    gated = register_pair(a, b, PipelineConfig(proposals={"A|B": far.tolist()}),
+    gated = register_pair(a, b, PipelineConfig(proposals={"A|B": far.tolist()}, **strict),
                           init=np.eye(4), seeded_from="manual", local_only=True)
     assert gated.seeded_from != "proposer" and np.linalg.norm(gated.transform[:3, 3]) < 0.6, gated.transform[:3, 3]
 
