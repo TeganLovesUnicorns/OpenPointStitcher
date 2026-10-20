@@ -3,6 +3,15 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.52.0 (2026-10-20)
+
+- "Run from my alignment" may move a scan up to 1.5 m and 15 degrees (was 0.5 m and 5), and the whole layout by
+  1 m on average (was 20 cm). A new setting, Movement limits, picks strict, normal or wide.
+- A move that makes a good match worse is now kept back by default, and listed so you can apply it by hand (new
+  setting, on by default).
+- How far a link may move a scan (Links button, and links after a run) is a setting, 1.5 m by default (was a
+  fixed 1 m).
+
 ## 0.51.0 (2026-10-19)
 
 - New setting, off by default: movement limits can ignore the whole layout moving together, so only scans moving
