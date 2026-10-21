@@ -16,7 +16,7 @@ from .pair_filter import candidate_pairs
 from .config import PipelineConfig
 from .align_points import load_seeds, seed_key
 from .merge import MergeResult, merge_scans, export
-from .align_pair import PairResult, register_pair
+from .align_pair import PairResult, register_pair, reset_gpu_stop
 from .align_graph import GlobalResult, build_and_optimize
 from .prepare import Prepared, preprocess_all
 from .pts_file import Scan, load_folder
@@ -61,6 +61,7 @@ def run_pairwise(
     """Register every planned pair; all keyword arguments are optional. progress_cb runs per pair and should_cancel
     between pairs; a pair's current stage (RANSAC, wall matching, corners, ...) is folded into desc as it runs."""
     seeds = seeds or {}
+    reset_gpu_stop()
     use_gpu_pipeline = cfg.use_gpu_pipeline and prepared_gpu is not None
     if cfg.use_gpu_pipeline and prepared_gpu is None:
         log.warning("cfg.use_gpu_pipeline is on but no prepared_gpu was "

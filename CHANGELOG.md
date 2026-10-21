@@ -3,6 +3,12 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.52.1 (2026-10-20)
+
+- A run no longer slows to a crawl when another program fills the graphics card: while the card is full, pairs are
+  matched on the processor, and the log says how many moved.
+- A job's saved record now names the stage it reached, so a run cut off by a restart says where it stopped.
+
 ## 0.52.0 (2026-10-20)
 
 - "Run from my alignment" may move a scan up to 1.5 m and 15 degrees (was 0.5 m and 5), and the whole layout by

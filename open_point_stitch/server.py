@@ -1010,8 +1010,9 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
         cfg_kwargs["midair_trust"] = bool(params.get("midair_trust", False))
         cfg_kwargs["learned_trust"] = bool(params.get("learned_trust", False))
         cfg_kwargs["seed_judge"] = bool(params.get("seed_judge", False))
+        gpu_wanted = bool(params.get("gpu", False)) and limits.resolve_use_gpu(True)
         # The weighted step's search runs on the GPU whenever the run has the GPU on.
-        cfg_kwargs["trust_search_on_gpu"] = bool(params.get("gpu", False)) and limits.resolve_use_gpu(True)
+        cfg_kwargs["trust_search_on_gpu"] = gpu_wanted
         if params.get("layout_bound_mean_m") is not None:   # diagnostic override
             cfg_kwargs["local_only_layout_bound_mean_m"] = float(params["layout_bound_mean_m"])
         # Only used with seed_from_placement, the one branch that builds per-scan ScanFeatures. A job that does not
@@ -1023,9 +1024,13 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
         cfg_kwargs["use_landmarks"] = bool(params.get("use_landmarks", PipelineConfig.use_landmarks))
         # Unseeded runs use the CUDA pipeline (two pairs at once at most, since they share one card); seeded runs
         # screen their candidates on the GPU and let the CPU confirm the best.
-        gpu_wanted = bool(params.get("gpu", False)) and limits.resolve_use_gpu(True)
         seeded_job = bool(params.get("seed_from_placement", False))
         use_gpu_pipeline = gpu_wanted and not seeded_job
+        # The unseeded pipeline cannot move pairs off the card part way, so it checks once at the start.
+        start_full = limits.card_too_full(limits.GPU_RUN_NEEDS_GB) if use_gpu_pipeline else ""
+        if start_full:
+            log.warning("%s; this run uses the CPU", start_full)
+            use_gpu_pipeline = False
         if use_gpu_pipeline:
             cfg_kwargs["use_gpu_pipeline"] = True
             cfg_kwargs["concurrency"] = min(concurrency, 2)
@@ -1145,7 +1150,9 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
         app.jobs.set_progress(job_id, "registering pairs", f"0/{len(pairs)}")
 
         def progress_cb(done: int, total: int, desc: str) -> None:
-            app.jobs.set_progress(job_id, "registering pairs", f"{done}/{total}: {desc}")
+            from open_point_stitch.align_pair import gpu_busy_now
+            busy = " (on the processor: the graphics card is full)" if gpu_busy_now() else ""
+            app.jobs.set_progress(job_id, "registering pairs", f"{done}/{total}{busy}: {desc}")
 
         t_pairwise_start = time.time()
         results = run_pairwise(prepared, pairs, cfg, seeds=seeds, progress_cb=progress_cb, scans=scans,
@@ -1154,6 +1161,14 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                                prepared_gpu=prepared_gpu)
         pairwise_elapsed_s = round(time.time() - t_pairwise_start, 1)
         marks.append(("matching pairs", time.time()))
+        from open_point_stitch.align_pair import gpu_moved_pairs, gpu_stop_reason
+        gpu_note = ""
+        if start_full:
+            gpu_note = f"{start_full[0].upper()}{start_full[1:]}, so this run used the processor, which is slower."
+        elif gpu_stop_reason():
+            why, moved = gpu_stop_reason(), gpu_moved_pairs()
+            gpu_note = (f"{why[0].upper()}{why[1:]}, so {moved} of {len(pairs)} pair(s) ran on the processor "
+                        "while it was full, which is slower.")
 
         if len(results) < len(pairs):
             # Cancelled: return before any pose is touched, keep finished pairs in the report.
@@ -1484,6 +1499,8 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
             "rejected_corrections": limit_outcome.rejected if limit_outcome else [],
             "layout_common_move": limit_outcome.common if limit_outcome else None,
             "reference_scan": root_name,         # the scan this run was pinned to
+            # Why the run used the CPU though the GPU was on, or "".
+            "gpu_note": gpu_note,
         }
         _write_align_auto_report(app.out_dir, result)
         app.jobs.finish(job_id, result)

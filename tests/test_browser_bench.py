@@ -4578,6 +4578,29 @@ def test_relative_movement_limits_are_off_by_default_and_reach_the_run(page):
     print("    off by default, ticking reached the server and the run (no reference chosen, none sent), put back off")
 
 
+def test_a_run_that_moved_off_a_full_graphics_card_says_so_in_the_log(page):
+    """A run that used the processor because the graphics card was full says why in the run log. Server answer faked."""
+    _goto(page)
+    note = ("The graphics card is nearly full (9.9 of 10.7 GB in use, most likely by another program), so this run "
+            "used the processor instead, which is slower.")
+    result = {"pairs": [], "poses": [], "n_loop_edges": 0, "unregistered": [], "moves": [], "gpu_note": note}
+    page.route("**/api/jobs", lambda route: route.fulfill(json={"id": "fakejob"}) if route.request.method == "POST"
+               else route.continue_())
+    page.route("**/api/jobs/fakejob", lambda route: route.fulfill(json={"id": "fakejob", "state": "done",
+                                                                       "progress": None, "result": result}))
+    try:
+        page.evaluate("() => { document.getElementById('out').value = ''; }")
+        _pick_run(page, "align_auto_seeded")
+        _press_run(page)
+        page.wait_for_function("() => document.getElementById('out').value.includes('automatic align done')",
+                               timeout=60_000)
+        out = page.locator("#out").input_value()
+        assert note in out and "FAILED" not in out, out[-800:]
+    finally:
+        page.unroute("**/api/jobs"); page.unroute("**/api/jobs/fakejob")
+    print("    the full-card note is in the run log")
+
+
 def test_movement_limits_guard_and_link_distance_have_their_defaults_save_and_reach_both_runs(page):
     """Settings > Aligning: Movement limits (1.5 m / 15 deg / 1 m), the guard (on) and the largest link move (1.5 m)
     are the defaults; changed, they are saved and sent with Run from my alignment and with the Links button. The
@@ -4980,6 +5003,7 @@ TESTS = [
     test_height_settle_setting_is_on_by_default_and_reaches_the_run,  # cancels its own job too
     test_relative_movement_limits_are_off_by_default_and_reach_the_run,  # cancels its own job
     test_movement_limits_guard_and_link_distance_have_their_defaults_save_and_reach_both_runs,
+    test_a_run_that_moved_off_a_full_graphics_card_says_so_in_the_log,
     test_automatic_align_starts,  # LAST: leaves a real job running server-side, see its own docstring
 ]
 

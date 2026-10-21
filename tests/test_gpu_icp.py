@@ -169,6 +169,61 @@ def test_a_gpu_failure_falls_back_to_the_cpu_instead_of_failing_the_pair():
     assert got.gpu_screened is None and np.abs(got.transform - cpu.transform).max() < 1e-9, "a GPU error must fall back to the CPU answer"
 
 
+def test_a_full_card_sends_each_pair_to_the_cpu_until_it_frees_up():
+    a, b, cfg = _pair()
+    off = np.eye(4)
+    off[:2, 3] = (0.12, -0.05)
+    cpu = _run(a, b, cfg, off)
+    from open_point_stitch import limits
+    real_ready, real_full = align_pair._gpu_ready, limits.card_too_full
+    align_pair._gpu_ready = lambda: True
+    asked, card = [], {"full": True}
+
+    def full(needs_gb):
+        asked.append(needs_gb)
+        return "the graphics card is nearly full (9.9 of 10.2 GB in use, most likely by another program)" if card["full"] else ""
+    limits.card_too_full = full
+    try:
+        align_pair.reset_gpu_stop()
+        first = _run(a, b, PipelineConfig(use_gpu_ladder=True), off)
+        second = _run(a, b, PipelineConfig(use_gpu_ladder=True), off)
+        reason, moved = align_pair.gpu_stop_reason(), align_pair.gpu_moved_pairs()
+        card["full"] = False
+        freed = align_pair.card_full_now(pair=True)
+    finally:
+        align_pair._gpu_ready, limits.card_too_full = real_ready, real_full
+    assert first.gpu_screened is None and second.gpu_screened is None
+    assert np.abs(first.transform - cpu.transform).max() < 1e-9, "a full card must give the CPU answer"
+    assert asked[:2] == [limits.GPU_RUN_NEEDS_GB] * 2, "every pair asks again, needing room for the run"
+    assert "nearly full" in reason and moved == 2
+    assert not freed and not align_pair.gpu_busy_now() and align_pair.gpu_moved_pairs() == 2
+    align_pair.reset_gpu_stop()
+    assert align_pair.gpu_stop_reason() == "" and align_pair.gpu_moved_pairs() == 0
+
+
+def test_the_card_check_says_nothing_when_the_card_cannot_be_read_or_has_room():
+    from open_point_stitch import limits
+    real = limits.card_memory
+    try:
+        limits.card_memory = lambda: None
+        assert limits.card_too_full(2.0) == ""
+        limits.card_memory = lambda: (2.5, 10.7)
+        assert limits.card_too_full(2.0) == ""
+        limits.card_memory = lambda: (9.9, 10.7)
+        assert "9.9 of 10.7 GB" in limits.card_too_full(2.0)
+    finally:
+        limits.card_memory = real
+
+
+def test_a_real_card_reports_its_memory_for_every_program_on_it():
+    from open_point_stitch.limits import card_memory
+    if not _card():
+        print("    SKIP: no CUDA device visible here")
+        return
+    mem = card_memory()
+    assert mem is not None and 0 < mem[0] < mem[1], mem
+
+
 def test_the_gpu_ladder_is_off_unless_asked_for():
     assert PipelineConfig().use_gpu_ladder is False
 

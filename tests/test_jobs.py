@@ -69,6 +69,16 @@ def test_finished_results_survive_a_restart_and_recent_leaves_the_result_out():
         assert "result" not in again.recent()[0]
 
 
+def test_the_record_on_disk_names_the_stage_a_job_reached():
+    with tempfile.TemporaryDirectory() as d:
+        jobs = JobStore(d)
+        job = jobs.try_start("align_auto")
+        jobs.set_progress(job, "registering pairs", "3/90")
+        again = JobStore(d)                      # as after a server stopped mid-run
+        got = again.get(job)
+        assert got["state"] == "interrupted" and got["progress"]["phase"] == "registering pairs", got
+
+
 def test_a_cancelled_job_keeps_its_partial_result_and_is_not_an_error():
     jobs = JobStore()
     job = jobs.try_start("align_auto")

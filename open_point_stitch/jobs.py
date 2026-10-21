@@ -137,7 +137,11 @@ class JobStore:
     def set_progress(self, job_id: str, phase: str, detail: str = "") -> None:
         with self._lock:
             if job_id in self._jobs:
-                self._jobs[job_id]["progress"] = {"phase": phase, "detail": detail}
+                job = self._jobs[job_id]
+                new_phase = job["progress"]["phase"] != phase
+                job["progress"] = {"phase": phase, "detail": detail}
+                if new_phase:                      # so a record left by a stopped server names the stage it reached
+                    self._save(job)
                 if _TRACE:
                     _trace(self._jobs[job_id], "phase")
 

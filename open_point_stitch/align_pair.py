@@ -374,7 +374,8 @@ def weighted_point_to_plane(src: Prepared, tgt: Prepared, init: np.ndarray, dist
     sp, tp = np.asarray(src.down.points), np.asarray(tgt.down.points)
     tn = np.asarray(tgt.down.normals)
     ws, wt = _weights(src, cfg), _weights(tgt, cfg)
-    dev = o3d.core.Device("CUDA:0" if cfg.trust_search_on_gpu and o3d.core.cuda.is_available() else "CPU:0")
+    on_gpu = cfg.trust_search_on_gpu and o3d.core.cuda.is_available() and not card_full_now()
+    dev = o3d.core.Device("CUDA:0" if on_gpu else "CPU:0")
     dtype = o3d.core.float32 if dev.get_type() == o3d.core.Device.DeviceType.CUDA else o3d.core.float64
     nns = o3d.core.nns.NearestNeighborSearch(o3d.core.Tensor(tp, dtype=dtype, device=dev))   # once per rung
     nns.hybrid_index(dist)                                             # radius-limited, like Open3D's own ICP
@@ -621,14 +622,57 @@ def _gpu_ready() -> bool:
     return bool(gpu_status()["gpu_usable"])
 
 
+# What the card-full check saw this run; cleared by reset_gpu_stop() at the start of each run.
+_gpu_busy = {"reason": "", "pairs": 0, "now": False, "used": False}
+_gpu_busy_lock = threading.Lock()
+
+
+def reset_gpu_stop() -> None:
+    """Called at the start of each run, so one run's full card is not reported by the next."""
+    _gpu_busy.update(reason="", pairs=0, now=False, used=False)
+
+
+def gpu_stop_reason() -> str:
+    """Why some of this run's work moved off the GPU, or "" if none did."""
+    return _gpu_busy["reason"]
+
+
+def gpu_moved_pairs() -> int:
+    """How many of this run's pairs ran on the CPU because the card was full."""
+    return _gpu_busy["pairs"]
+
+
+def gpu_busy_now() -> bool:
+    """Whether the latest check found the card full."""
+    return _gpu_busy["now"]
+
+
+def card_full_now(pair: bool = False) -> bool:
+    """Whether the card is too full to share right now. Checked per pair, so work returns to the GPU once the
+    other program lets go; before this run has used the card it must have room for the whole run."""
+    from .limits import GPU_FULL_FREE_GB, GPU_RUN_NEEDS_GB, card_too_full
+    reason = card_too_full(GPU_FULL_FREE_GB if _gpu_busy["used"] else GPU_RUN_NEEDS_GB)
+    with _gpu_busy_lock:
+        _gpu_busy["now"] = bool(reason)
+        if reason:
+            if not _gpu_busy["reason"]:
+                log.warning("%s; pairs use the CPU until it frees up", reason)
+            _gpu_busy["reason"] = _gpu_busy["reason"] or reason
+            _gpu_busy["pairs"] += int(pair)
+    return bool(reason)
+
+
 def _gpu_screen(src: Prepared, tgt: Prepared, candidates: list, cfg: PipelineConfig):
     """Every candidate's ICP ladder on the GPU at once, as (4x4, fitness, rmse, matches) each, or None if the GPU
     cannot be used (the caller then does everything on the CPU)."""
-    if not _gpu_ready():
+    # A card shared beyond its size makes every program on it crawl.
+    if not _gpu_ready() or card_full_now(pair=True):
         return None
     try:
         from .align_gpu import ladder_batch
-        return ladder_batch(src, tgt, [start for _origin, start in candidates], cfg, max_iteration=cfg.gpu_screen_iterations)
+        got = ladder_batch(src, tgt, [start for _origin, start in candidates], cfg, max_iteration=cfg.gpu_screen_iterations)
+        _gpu_busy["used"] = True
+        return got
     except Exception as exc:  # noqa: BLE001 - a GPU problem costs speed, never the result
         log.warning("%s -> %s: GPU screen failed (%s), using the CPU for this pair", src.name, tgt.name, exc)
         return None

@@ -76,6 +76,15 @@ better.
 Doors open and close, cases get pushed, chairs move. Alignment tolerates a modest share of the scene changing, but a
 pair will score lower than expected. Remove moved objects in review if they cause trouble.
 
+## The computer
+
+### Another program filling the graphics card
+
+A graphics card that runs out of memory does not refuse more work: the programs sharing it keep swapping each
+other's data in and out, and all of them slow to a crawl. While another program is using most of the card, a run
+matches its pairs on the processor instead, goes back to the card once it frees up, and says in the log how many
+pairs moved. It still finishes, more slowly.
+
 ## Output
 
 ### File size

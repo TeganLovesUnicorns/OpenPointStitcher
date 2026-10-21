@@ -5120,6 +5120,7 @@ function runAlignAuto(seeded,useAnchors,focusScan){       // focusScan: only tha
     applyAlignAutoResultToLinks(job.result.pairs);  // handoff 2026-09-14 item H
     renderAll();
     appendStatus('automatic align done:');
+    if(job.result.gpu_note) appendStatus(job.result.gpu_note);
     for(const line of describePoseChanges(before)) appendStatus(line);
     for(const line of describeMoveReasons(job.result)) appendStatus(line);
     for(const line of describeBentScans((job.result.bent_scans||{}).flags)) appendStatus(line);

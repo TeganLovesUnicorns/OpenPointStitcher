@@ -172,6 +172,50 @@ def _cuda_kernel_runs() -> tuple[bool, str]:
         return False, f"{type(exc).__name__}: {exc}"
 
 
+# Card room a seeded run needs; one on a 14-scan venue held about 1.6 GB.
+GPU_RUN_NEEDS_GB = 2.0
+# Below this much free memory mid-run, the card is shared beyond its size and every program on it crawls.
+GPU_FULL_FREE_GB = 0.75
+
+
+class _NvmlMemory(ctypes.Structure):
+    _fields_ = [("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong), ("used", ctypes.c_ulonglong)]
+
+
+@functools.lru_cache(maxsize=1)
+def _nvml():
+    """The driver's own library and card 0, or None where it is missing."""
+    try:
+        lib = ctypes.CDLL("libnvidia-ml.so.1")
+        handle = ctypes.c_void_p()
+        if lib.nvmlInit_v2() != 0 or lib.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(handle)) != 0:
+            return None
+        return lib, handle
+    except (OSError, AttributeError):
+        return None
+
+
+def card_memory() -> Optional[tuple[float, float]]:
+    """(used GB, total GB) for the whole card, every program on it counted, or None if it cannot be read. CUDA's own
+    free-memory figure inside a container does not count other programs, so it is not used."""
+    nv = _nvml()
+    if nv is None:
+        return None
+    lib, handle = nv
+    mem = _NvmlMemory()
+    if lib.nvmlDeviceGetMemoryInfo(handle, ctypes.byref(mem)) != 0:
+        return None
+    return mem.used / 1e9, mem.total / 1e9
+
+
+def card_too_full(needs_gb: float) -> str:
+    """Plain words for why the card cannot spare `needs_gb` right now, or "" if it can (or cannot be read)."""
+    mem = card_memory()
+    if mem is None or mem[1] - mem[0] >= needs_gb:
+        return ""
+    return f"the graphics card is nearly full ({mem[0]:.1f} of {mem[1]:.1f} GB in use, most likely by another program)"
+
+
 def resolve_use_gpu(requested: bool) -> bool:
     """Honour the run's GPU toggle, but never claim GPU we do not have."""
     if not requested:
