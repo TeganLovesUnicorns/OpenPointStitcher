@@ -1,6 +1,6 @@
 """Tests for the GPU ICP (align_gpu.py) and the screen-then-confirm path in register_pair: it agrees with the
-CPU ICP, gives the same answer every run, hands the final answer to the CPU, and falls back to the CPU when there
-is no GPU or it fails. Tests that need a GPU skip without one."""
+CPU ICP, gives the same answer every run, takes the card's answer (or the CPU's when asked to double-check), and
+falls back to the CPU when there is no GPU or it fails. Tests that need a GPU skip without one."""
 from __future__ import annotations
 
 import os
@@ -97,7 +97,7 @@ def _run(a, b, cfg, init):
     return register_pair(a, b, cfg, init=init, seeded_from="manual", local_only=True)
 
 
-def test_the_screen_and_confirm_path_returns_the_cpus_answer_for_its_winner():
+def test_the_cards_answer_is_final_unless_the_cpu_is_asked_to_check_it():
     if not _card():
         print("    SKIP: no usable GPU here")
         return
@@ -106,6 +106,22 @@ def test_the_screen_and_confirm_path_returns_the_cpus_answer_for_its_winner():
     off[:2, 3] = (0.12, -0.05)                                    # a placement that is a little off
     cpu = _run(a, b, cfg, off)
     gpu = _run(a, b, PipelineConfig(use_gpu_ladder=True), off)
+    assert gpu.gpu_screened is True and gpu.gpu_verified == 0, (gpu.gpu_screened, gpu.gpu_verified)
+    assert gpu.accepted == cpu.accepted and gpu.method == cpu.method, (gpu.method, cpu.method)
+    apart = np.linalg.norm(gpu.transform[:3, 3] - cpu.transform[:3, 3]) * 100.0
+    assert apart < 2.0, f"the card's answer is {apart:.2f} cm from the CPU's"
+    print(f"    card's answer {apart:.3f} cm from the CPU's, no CPU repeat")
+
+
+def test_the_screen_and_confirm_path_returns_the_cpus_answer_for_its_winner():
+    if not _card():
+        print("    SKIP: no usable GPU here")
+        return
+    a, b, cfg = _pair()
+    off = np.eye(4)
+    off[:2, 3] = (0.12, -0.05)                                    # a placement that is a little off
+    cpu = _run(a, b, cfg, off)
+    gpu = _run(a, b, PipelineConfig(use_gpu_ladder=True, gpu_cpu_check=True), off)
     assert gpu.gpu_screened is True and gpu.gpu_verified >= 1, (gpu.gpu_screened, gpu.gpu_verified)
     assert gpu.accepted == cpu.accepted and gpu.method == cpu.method, (gpu.method, cpu.method)
     assert np.linalg.norm(gpu.transform[:3, 3] - cpu.transform[:3, 3]) < 0.01, "the confirmed winner is not the CPU's answer"

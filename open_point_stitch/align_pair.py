@@ -673,7 +673,7 @@ def _gpu_screen(src: Prepared, tgt: Prepared, candidates: list, cfg: PipelineCon
         got = ladder_batch(src, tgt, [start for _origin, start in candidates], cfg, max_iteration=cfg.gpu_screen_iterations)
         _gpu_busy["used"] = True
         return got
-    except Exception as exc:  # noqa: BLE001 - a GPU problem costs speed, never the result
+    except Exception as exc:  # noqa: BLE001 - a GPU problem must not fail the pair
         log.warning("%s -> %s: GPU screen failed (%s), using the CPU for this pair", src.name, tgt.name, exc)
         return None
 
@@ -916,20 +916,27 @@ def register_pair(
             if best is None or verdict.vote_score > best_vote_score:
                 best, best_verdict, best_vote_score = entry, verdict, verdict.vote_score
     else:
-        # The GPU refined every candidate at once; the CPU repeats the ladder for the best few from their original
-        # starting poses, so the answer is always the CPU's.
+        # The GPU refined every candidate at once and its best is the answer. With gpu_cpu_check the CPU repeats the
+        # ladder for the best few from their original starting poses instead, and its answer is final.
         report(f"scoring {len(candidates)} GPU-screened candidate(s)")
-        ranked = []
+        ranked, entries = [], {}
         for k, (origin, _start) in enumerate(candidates):
-            status, _entry, verdict = consider(origin, screen[k])
+            status, entry, verdict = consider(origin, screen[k])
             if status != "ok":
                 refusals[status] += 1
                 continue
             scored.append(verdict)
             ranked.append((-verdict.vote_score, k))
+            entries[k] = (entry, verdict)
         ranked.sort()
         res.gpu_screened, res.gpu_verified, best_k, ladders = True, 0, None, 0
-        report(f"verifying the top {cfg.gpu_verify_top} on the CPU")
+        if not cfg.gpu_cpu_check:
+            if ranked:
+                best, best_verdict = entries[ranked[0][1]]
+                best_vote_score = best_verdict.vote_score
+            ranked = []
+        else:
+            report(f"verifying the top {cfg.gpu_verify_top} on the CPU")
         for _neg, k in ranked:
             if res.gpu_verified >= cfg.gpu_verify_top or ladders >= 2 * cfg.gpu_verify_top:
                 break

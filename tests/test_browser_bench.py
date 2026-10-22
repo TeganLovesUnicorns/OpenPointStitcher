@@ -4578,6 +4578,43 @@ def test_relative_movement_limits_are_off_by_default_and_reach_the_run(page):
     print("    off by default, ticking reached the server and the run (no reference chosen, none sent), put back off")
 
 
+def test_the_processor_double_check_is_off_by_default_has_help_and_reaches_the_run(page):
+    """Settings > Resources > double-check on the processor: off by default, hover text, its "?" opens its Help entry,
+    saved, and sent with a run. Cancelled at once."""
+    def open_resources():
+        page.locator('.menubtn[data-menu="menuSettings"]').click()
+        page.locator('button[role="tab"]:has-text("Resources")').click()
+
+    _goto(page)
+    open_resources()
+    box = page.locator("#cbGpuCpuCheck")
+    assert not box.is_checked(), "the processor double-check should be off by default"
+    assert "Off by default" in (page.locator('[data-setting="cbGpuCpuCheck"]').get_attribute("title") or ""), \
+        "the setting has no hover description"
+    box.check()
+    try:
+        assert _saved_settings(page, gpu_cpu_check=True).get("gpu_cpu_check") is True, "ticking did not reach the server"
+        page.keyboard.press("Escape")
+        _pick_run(page, "align_auto_seeded")
+        with page.expect_request(lambda r: "/api/jobs" in r.url and r.method == "POST") as req_info:
+            _press_run(page)
+        body = req_info.value.post_data_json
+        assert body.get("gpu_cpu_check") is True, f"the run was not told the setting: {body}"
+        page.wait_for_timeout(1000)
+        page.locator("#bCancelJob").click()
+        page.wait_for_function("() => { const t = document.getElementById('out').value; "
+                               "return t.includes('cancelled') || t.includes('AUTOMATIC ALIGN FAILED'); }", timeout=120_000)
+    finally:
+        open_resources()
+        page.locator("#cbGpuCpuCheck").uncheck()
+        assert _saved_settings(page, gpu_cpu_check=False).get("gpu_cpu_check") is False, "the setting was not put back"
+    page.locator('[data-setting="cbGpuCpuCheck"] .mc-help-link').click()
+    entry = page.locator("#help-cbGpuCpuCheck")
+    assert entry.is_visible() and "two best answers" in entry.inner_text(), "the '?' did not open this setting's Help entry"
+    page.keyboard.press("Escape")
+    print("    off by default, hover text, ticking reached the server and the run, put back off, '?' opened its Help")
+
+
 def test_a_run_that_moved_off_a_full_graphics_card_says_so_in_the_log(page):
     """A run that used the processor because the graphics card was full says why in the run log. Server answer faked."""
     _goto(page)
@@ -5002,6 +5039,7 @@ TESTS = [
     test_run_from_alignment_using_links_too_starts_with_the_right_params,  # cancels its own job; must not leave one running before the next test
     test_height_settle_setting_is_on_by_default_and_reaches_the_run,  # cancels its own job too
     test_relative_movement_limits_are_off_by_default_and_reach_the_run,  # cancels its own job
+    test_the_processor_double_check_is_off_by_default_has_help_and_reaches_the_run,  # cancels its own job
     test_movement_limits_guard_and_link_distance_have_their_defaults_save_and_reach_both_runs,
     test_a_run_that_moved_off_a_full_graphics_card_says_so_in_the_log,
     test_automatic_align_starts,  # LAST: leaves a real job running server-side, see its own docstring
@@ -5025,6 +5063,7 @@ TEST_TIMEOUT_OVERRIDES_S = {
     "test_run_from_alignment_using_links_too_starts_with_the_right_params": 180,  # loads 14 real scans' full-res data before the first cancel check point
     "test_height_settle_setting_is_on_by_default_and_reaches_the_run": 180,  # same reason
     "test_relative_movement_limits_are_off_by_default_and_reach_the_run": 180,  # same reason
+    "test_the_processor_double_check_is_off_by_default_has_help_and_reaches_the_run": 180,  # same reason
     "test_keep_the_iphones_level_rebuilds_that_scan_saves_it_and_unticking_levels_it_again": 300,  # two preview rebuilds
     "test_no_text_or_controls_overlap_at_common_window_sizes": 240,   # 20 full-page scans of every text box, at one thread
     "test_scans_from_anywhere_import_into_a_new_project_and_an_open_one": 240,  # opens a new project twice, previews built

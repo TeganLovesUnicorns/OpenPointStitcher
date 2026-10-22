@@ -1023,7 +1023,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
             params.get("adaptive_search_voxel", PipelineConfig.adaptive_search_voxel))
         cfg_kwargs["use_landmarks"] = bool(params.get("use_landmarks", PipelineConfig.use_landmarks))
         # Unseeded runs use the CUDA pipeline (two pairs at once at most, since they share one card); seeded runs
-        # screen their candidates on the GPU and let the CPU confirm the best.
+        # screen their candidates on the GPU and keep the best, or let the CPU confirm it with gpu_cpu_check.
         seeded_job = bool(params.get("seed_from_placement", False))
         use_gpu_pipeline = gpu_wanted and not seeded_job
         # The unseeded pipeline cannot move pairs off the card part way, so it checks once at the start.
@@ -1039,6 +1039,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
             for knob in ("gpu_verify_top", "gpu_screen_iterations"):          # measurement knobs; the page never sets them
                 if params.get(knob) is not None:
                     cfg_kwargs[knob] = int(params[knob])
+            cfg_kwargs["gpu_cpu_check"] = bool(params.get("gpu_cpu_check", False))
         for knob, cast in _SEARCH_KNOBS.items():                               # search experiments
             if params.get(knob) is not None:
                 cfg_kwargs[knob] = cast(params[knob])
@@ -1073,7 +1074,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                       "n_pairs_before_filter": 0, "n_pairs_after_filter": 0, "n_pairs_completed": 0,
                       "n_placement_seeds": 0, "adjacency_method": None,
                       "adjacency_padding_m": float(params.get("adjacency_padding_m", 3.0)),
-                      "use_gpu_pipeline": cfg.use_gpu_pipeline, "use_gpu_ladder": cfg.use_gpu_ladder, "detector_vote_enabled": cfg.detector_vote_enabled, "adjacency_fractions": [],
+                      "use_gpu_pipeline": cfg.use_gpu_pipeline, "use_gpu_ladder": cfg.use_gpu_ladder, "gpu_cpu_check": cfg.gpu_cpu_check, "detector_vote_enabled": cfg.detector_vote_enabled, "adjacency_fractions": [],
                       "pairwise_elapsed_s": 0.0, "total_elapsed_s": round(time.time() - t_align_start, 1)}
             _write_align_auto_report(app.out_dir, result)
             app.jobs.finish_cancelled(job_id, result)
@@ -1182,7 +1183,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                 "adjacency_method": adjacency_method,
                 "adjacency_padding_m": padding_m,
                 # Record whether the detector vote was on for this run.
-                "use_gpu_pipeline": cfg.use_gpu_pipeline, "use_gpu_ladder": cfg.use_gpu_ladder, "detector_vote_enabled": cfg.detector_vote_enabled,
+                "use_gpu_pipeline": cfg.use_gpu_pipeline, "use_gpu_ladder": cfg.use_gpu_ladder, "gpu_cpu_check": cfg.gpu_cpu_check, "detector_vote_enabled": cfg.detector_vote_enabled,
                 "adjacency_fractions": adjacency_fraction_rows,
                 "pairwise_elapsed_s": pairwise_elapsed_s,
                 "total_elapsed_s": round(time.time() - t_align_start, 1),
@@ -1445,7 +1446,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                 "n_placement_seeds": len(seeds),
                 "adjacency_method": adjacency_method,
                 "adjacency_padding_m": padding_m,
-                "use_gpu_pipeline": cfg.use_gpu_pipeline, "use_gpu_ladder": cfg.use_gpu_ladder, "detector_vote_enabled": cfg.detector_vote_enabled,  # handoff 2026-09-14 item G
+                "use_gpu_pipeline": cfg.use_gpu_pipeline, "use_gpu_ladder": cfg.use_gpu_ladder, "gpu_cpu_check": cfg.gpu_cpu_check, "detector_vote_enabled": cfg.detector_vote_enabled,  # handoff 2026-09-14 item G
                 "use_anchors": use_anchors,
                 "n_anchors": (anchor_stage or {}).get("n_anchors", 0),
                 "layout_bound_tripped": layout_bound_tripped,
@@ -1475,7 +1476,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
             "n_placement_seeds": len(seeds),
             "adjacency_method": adjacency_method,
             "adjacency_padding_m": padding_m,
-            "use_gpu_pipeline": cfg.use_gpu_pipeline, "use_gpu_ladder": cfg.use_gpu_ladder, "detector_vote_enabled": cfg.detector_vote_enabled,  # handoff 2026-09-14 item G
+            "use_gpu_pipeline": cfg.use_gpu_pipeline, "use_gpu_ladder": cfg.use_gpu_ladder, "gpu_cpu_check": cfg.gpu_cpu_check, "detector_vote_enabled": cfg.detector_vote_enabled,  # handoff 2026-09-14 item G
             "adjacency_fractions": adjacency_fraction_rows,
             "pairwise_elapsed_s": pairwise_elapsed_s,
             "total_elapsed_s": round(time.time() - t_align_start, 1),

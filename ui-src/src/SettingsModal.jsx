@@ -52,6 +52,9 @@ export default function SettingsModal({ opened, onClose, onHelp }) {
               helpAnchor="resources" onHelp={onHelp} />
             <div style={{ marginTop: 8 }}>
               <Tg id="cbGpu" label="Use GPU where possible" helpAnchor="resources" onHelp={onHelp} />
+              <Tg id="cbGpuCpuCheck" indent label="... and double-check its answers on the processor (slower)"
+                helpAnchor="cbGpuCpuCheck" onHelp={onHelp}
+                title="Off by default. In Run from my alignment the graphics card's answer for each pair is final. On: the processor repeats the card's two best answers for every pair and its answer is used instead. Runs take about twice as long; on both test venues the result was no better." />
             </div>
             <Text
               id="gpuStatusNote"

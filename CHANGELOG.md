@@ -3,6 +3,12 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.53.0 (2026-10-21)
+
+- "Run from my alignment" with the GPU on now takes the graphics card's answer for each pair instead of repeating
+  the best two on the processor, so runs take about half as long with the same accuracy on both test venues. A new
+  setting, off by default, brings the processor double-check back.
+
 ## 0.52.1 (2026-10-20)
 
 - A run no longer slows to a crawl when another program fills the graphics card: while the card is full, pairs are
