@@ -1964,17 +1964,22 @@ class App:
                 if s.get("name") == name:
                     s["reprocessed_with"] = ids
         _write_placement_merged(self.out_dir, _record)
+        before, payload = self._rebuild_preview(name, {**saved, "scans": [{"name": name, "reprocessed_with": ids}]})
+        return {"name": name, "reprocessed_with": ids, "changes": _describe_reprocess(before, payload)}
+
+    def _rebuild_preview(self, name: str, saved: dict) -> tuple[dict, dict]:
+        """(old payload, new payload): one scan's preview rebuilt with the exclusions and stairs `saved` re-processes
+        it with, stored, and its tilt-solve points dropped since its levelling may have changed."""
         before = self.payloads.get(name) or {}
-        now = {**saved, "scans": [{"name": name, "reprocessed_with": ids}]}
         payload, _ = self._preview_pool.submit(build_bench.build_scan_payload_cached, self._paths[name],
-                                               self._cache_dir, _reprocessed_exclusions(now, name),
-                                               _reprocessed_exclusions(now, name, "stairs"),
+                                               self._cache_dir, _reprocessed_exclusions(saved, name),
+                                               _reprocessed_exclusions(saved, name, "stairs"),
                                                self.preview_options()).result()
         with self._lock:
             self.payloads[name] = payload
         with self._tilt_lock:
-            self._tilt_inputs.pop(name, None)      # its levelling may have changed
-        return {"name": name, "reprocessed_with": ids, "changes": _describe_reprocess(before, payload)}
+            self._tilt_inputs.pop(name, None)
+        return before, payload
 
     def preview_options(self) -> dict:
         """The project's preview settings, read from its file each time so a changed setting reaches the next build in
@@ -1987,16 +1992,7 @@ class App:
         if name not in self._paths:
             raise KeyError(name)
         self.build_events[name].wait()
-        saved = _read_placement(self.out_dir) or {}
-        before = self.payloads.get(name) or {}
-        payload, _ = self._preview_pool.submit(build_bench.build_scan_payload_cached, self._paths[name],
-                                               self._cache_dir, _reprocessed_exclusions(saved, name),
-                                               _reprocessed_exclusions(saved, name, "stairs"),
-                                               self.preview_options()).result()
-        with self._lock:
-            self.payloads[name] = payload
-        with self._tilt_lock:
-            self._tilt_inputs.pop(name, None)      # its levelling may have changed
+        before, payload = self._rebuild_preview(name, _read_placement(self.out_dir) or {})
         return {"name": name, "tilt_before": before.get("tilt"), "tilt": payload.get("tilt"),
                 "levelled_to_floor": not np.allclose(payload["level_rotation"], np.eye(3))}
 
