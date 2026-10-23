@@ -288,24 +288,17 @@ def _apply_process_settings(settings: dict) -> None:
         log.warning("ignoring an unusable levelling tilt setting: %r", settings.get("level_tilt_deg"))
 
 
-def _attach_openings(app: "App", features, scan, prepared) -> None:
-    """Attach doors and windows to one scan's features, found in the levelled frame the bench shows. A scan without
-    a built preview gets none and does not vote."""
+def _attach_openings_and_landmarks(app: "App", features, scan, prepared) -> None:
+    """Attach doors and windows, and landmarks (furniture and fixtures; organic shapes already rejected), to one
+    scan's features, found in the levelled frame the bench shows. A scan without a built preview gets none and does
+    not vote."""
     with app._lock:
         payload = app.payloads.get(scan.name)
     if payload is None:
         return
-    find_openings.build_scan_openings(features, scan.points, prepared.down, payload["level_rotation"], float(payload["floor_z"]))
-
-
-def _attach_landmarks(app: "App", features, scan, prepared) -> None:
-    """Attach landmarks (furniture and fixtures; organic shapes already rejected) to one scan's features, in the
-    same levelled frame as _attach_openings."""
-    with app._lock:
-        payload = app.payloads.get(scan.name)
-    if payload is None:
-        return
-    find_landmarks.build_scan_landmarks(features, prepared.down, payload["level_rotation"], float(payload["floor_z"]))
+    level, floor_z = payload["level_rotation"], float(payload["floor_z"])
+    find_openings.build_scan_openings(features, scan.points, prepared.down, level, floor_z)
+    find_landmarks.build_scan_landmarks(features, prepared.down, level, floor_z)
 
 
 def _compute_deviation(app: "App") -> dict:
@@ -1114,8 +1107,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                                                   f"corners, edges, doors and landmarks: {k}/{n_placed}: {scans[i].name}")
                             find_corners.build_scan_corners(f)
                             find_corners.build_scan_edges(f)
-                            _attach_openings(app, f, scans[i], prepared[i])
-                            _attach_landmarks(app, f, scans[i], prepared[i])
+                            _attach_openings_and_landmarks(app, f, scans[i], prepared[i])
                 surf_set = set(surf)
                 pairs = [p for p in all_pairs if p in surf_set]
                 adjacency_method = "feature"

@@ -13,7 +13,7 @@ from typing import Iterable, Optional
 import numpy as np
 
 from .lib.files import write_json_atomic
-from .lib.poses import tilt_matrix3
+from .lib.poses import ScanPose, tilt_matrix3
 
 log = logging.getLogger(__name__)
 
@@ -39,13 +39,13 @@ class Placement:
         """One scan's entry from a placement file. Missing tilt reads as zero (older files have none); missing yaw or
         position reads as zero too unless strict, which raises KeyError instead. prefix="human_" reads the hand
         placement saved beside the pose."""
-        pose = (lambda k: float(s[prefix + k])) if strict else (lambda k: float(s.get(prefix + k, 0.0)))
+        pose = ScanPose.from_dict(s, strict=strict, prefix=prefix)
         return cls(
             name=s["name"],
             level_rotation=np.array(s.get("level_rotation", np.eye(3).tolist()), dtype=float),
             floor_z=float(s.get("floor_z_local_m", 0.0)),
-            yaw_deg=pose("yaw_deg"), tx=pose("x_m"), ty=pose("y_m"), tz=pose("z_m"),
-            pitch_deg=float(s.get(prefix + "pitch_deg", 0.0)), roll_deg=float(s.get(prefix + "roll_deg", 0.0)),
+            yaw_deg=pose.yaw_deg, tx=pose.x_m, ty=pose.y_m, tz=pose.z_m,
+            pitch_deg=pose.pitch_deg, roll_deg=pose.roll_deg,
             locked=bool(s.get("locked", False)),
         )
 

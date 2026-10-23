@@ -161,7 +161,9 @@ class ScanPose:
 
     @classmethod
     def from_dict(cls, s: dict, strict: bool = False, prefix: str = "") -> "ScanPose":
-        """One scan's pose from a placement entry; strict and prefix as in Placement.from_dict."""
+        """One scan's pose from a placement entry. Missing tilt reads as zero (older files have none); missing yaw or
+        position reads as zero too unless strict, which raises KeyError. prefix="human_" reads the hand placement
+        saved beside the pose. Placement.from_dict reads the pose through this."""
         pose = (lambda k: float(s[prefix + k])) if strict else (lambda k: float(s.get(prefix + k, 0.0)))
         return cls(yaw_deg=pose("yaw_deg"), x_m=pose("x_m"), y_m=pose("y_m"), z_m=pose("z_m"),
                    pitch_deg=float(s.get(prefix + "pitch_deg", 0.0)), roll_deg=float(s.get(prefix + "roll_deg", 0.0)))

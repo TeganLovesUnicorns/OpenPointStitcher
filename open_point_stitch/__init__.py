@@ -1,4 +1,4 @@
-﻿"""OpenPointStitcher.
+"""OpenPointStitcher.
 
 Local, offline pipeline that aligns a folder of gravity-levelled indoor scans into one model, using the geometry
 the scans share.
