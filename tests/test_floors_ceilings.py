@@ -121,9 +121,10 @@ def test_known_height_errors_are_closed_and_the_locked_scan_stays():
     payloads = {"A": _payload(_settle_room(rng, 0.0), true["A"]), "B": _payload(_settle_room(rng, 3.0), true["B"]),
                 "C": _payload(_settle_room(rng, 6.0), true["C"])}
     placed = {"A": ScanPose(), "B": ScanPose(z_m=0.10), "C": ScanPose(z_m=-0.05)}
-    dz, gaps = settle(payloads, placed, fixed={"A"})
-    assert "A" not in dz and len(gaps) >= 2, (dz, gaps)
-    assert abs(dz["B"] + 0.10) < 0.01 and abs(dz["C"] - 0.05) < 0.01, dz
+    for along in (False, True):
+        dz, gaps = settle(payloads, placed, fixed={"A"}, along_normal=along)
+        assert "A" not in dz and len(gaps) >= 2, (along, dz, gaps)
+        assert abs(dz["B"] + 0.10) < 0.01 and abs(dz["C"] - 0.05) < 0.01, (along, dz)
 
 
 def test_scans_outside_the_run_are_not_moved():
@@ -132,6 +133,21 @@ def test_scans_outside_the_run_are_not_moved():
     placed = {"A": ScanPose(), "B": ScanPose(z_m=0.10), "C": ScanPose(z_m=-0.05)}
     dz, _ = settle(payloads, placed, fixed={"A"}, only={"B"})
     assert set(dz) == {"B"}, dz
+
+
+def test_a_step_beside_the_floor_does_not_count_as_floor_height():
+    """B sits 5 cm high. Most of the flat points near A's floor are on B's 40 cm step: the old pairing reads the step
+    as floor height; along the surfaces the step is too far from the floor to pair, and the 5 cm comes out."""
+    from open_point_stitch.align_anchors import flat_height_gap
+    rng = np.random.default_rng(6)
+    floor = lambda n, z: np.column_stack([rng.uniform(0, 6, n), rng.uniform(0, 6, n), np.full(n, z)])
+    a = floor(6000, 0.0)
+    b = np.vstack([floor(3000, 0.05), floor(9000, 0.45)])
+    _, old = flat_height_gap(b, a)
+    _, new = flat_height_gap(b, a, along_normal=True)
+    assert old > 0.3, old
+    assert abs(new - 0.05) < 0.005, new
+    print(f"    old pairing {old * 100:.1f} cm, along the surfaces {new * 100:.1f} cm (true 5.0)")
 
 
 def test_one_pair_that_disagrees_with_the_rest_counts_for_less():

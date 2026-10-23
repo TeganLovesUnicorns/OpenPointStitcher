@@ -3,6 +3,12 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.55.0 (2026-10-23)
+
+- Settling heights now pairs only flat points on surfaces that face the same way and sit within 30 cm, and measures
+  the height above the other scan's surface, so a step, stage edge or seat beside the floor no longer pulls a scan
+  up or down. Floors and ceilings of overlapping scans agree better on both test venues.
+
 ## 0.54.0 (2026-10-23)
 
 - The graphics card now weights each pair the way the processor does: "Trust thin, crisp surfaces" (and the mid-air
