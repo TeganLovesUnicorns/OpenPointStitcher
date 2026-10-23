@@ -11,7 +11,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from open_point_stitch.exclusions import excluded_mask, filter_scan, filter_scans, for_export  # noqa: E402
+from open_point_stitch.exclusions import (excluded_mask, filter_scan, filter_scans, for_export,  # noqa: E402
+                                          payload_without_excluded)
+from open_point_stitch.lib.poses import levelled_points, tilt_matrix3  # noqa: E402
 from open_point_stitch.placement import Exclusion  # noqa: E402
 from open_point_stitch.pts_file import Scan  # noqa: E402
 
@@ -146,6 +148,27 @@ def test_an_export_keeps_exclude_regions_unless_told_and_always_drops_removals()
     assert for_export([box, removal]) == [removal]
     assert for_export([box, removal], keep_excluded=False) == [box, removal]
     assert for_export([]) == []
+
+
+def test_preview_points_lose_exactly_the_raw_points_a_region_holds():
+    """A tilted level and a raised floor: the preview's points inside a raw-frame region are cut, every per-point list
+    stays in step, and marked stairs are renumbered."""
+    rng = np.random.default_rng(4)
+    raw = rng.uniform(-3, 3, (400, 3))
+    level, floor_z = tilt_matrix3(3.0, -2.0, 0.0), 0.4
+    lv = levelled_points(raw, level, floor_z)
+    payload = {"name": "A", "level_rotation": level.tolist(), "floor_z": floor_z,
+               "xy": lv[:, :2].ravel().tolist(), "h": lv[:, 2].tolist(), "rgb": list(range(400)),
+               "agreement": (np.arange(400) / 400).tolist(), "stairs": [0, 5, 6, 399]}
+    region = _region("A", (0.0, 0.0, 0.0), (2.0, 2.0, 6.0))
+    inside = excluded_mask(raw, [region])
+    got = payload_without_excluded(payload, [region])
+    assert len(got["h"]) == int((~inside).sum()) and len(got["rgb"]) == len(got["h"])
+    assert np.array_equal(got["rgb"], np.arange(400)[~inside]), "colours fell out of step with the points"
+    assert np.allclose(np.asarray(got["xy"]).reshape(-1, 2), lv[~inside, :2])
+    kept_stairs = [i for i in payload["stairs"] if not inside[i]]
+    assert [int(got["rgb"][j]) for j in got["stairs"]] == kept_stairs, "stairs point at the wrong points"
+    assert payload_without_excluded(payload, [_region("B", (0, 0, 0), (9, 9, 9))]) is payload
 
 
 if __name__ == "__main__":

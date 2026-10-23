@@ -5,12 +5,15 @@ written."""
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Optional
 
 import numpy as np
 
+from .lib.clouds import payload_subset
 from .lib.geometry import points_in_box
+from .lib.poses import levelled_points
 from .placement import Exclusion
-from .pts_file import Scan
+from .pts_file import Scan, read_pts
 
 
 def _in_polygon(xy: np.ndarray, poly: np.ndarray) -> np.ndarray:
@@ -89,6 +92,26 @@ def for_export(regions: list[Exclusion], keep_excluded: bool = True) -> list[Exc
     """What an export leaves out: every review removal, plus exclude regions only when keep_excluded is off. Alignment
     always uses all of regions."""
     return [r for r in regions if r.is_removal or not keep_excluded]
+
+
+def levelled_scan(path: str, level_rotation, floor_z: float, exclusions: Optional[list[Exclusion]] = None):
+    """Every point of the scan, exclusions and review removals cut, levelled, its detected floor at height 0."""
+    scan = read_pts(path)
+    if exclusions:
+        scan = filter_scan(scan, exclusions)
+    return levelled_points(scan.points, level_rotation, floor_z)
+
+
+def payload_without_excluded(payload: dict, regions: list[Exclusion]) -> dict:
+    """A scan's preview payload without the points inside its exclusion regions and review removals, which no
+    alignment step may use; the payload itself when none apply."""
+    own = [r for r in regions if r.scan == payload["name"]]
+    if not own:
+        return payload
+    xy = np.asarray(payload["xy"], dtype=float).reshape(-1, 2)
+    levelled = np.column_stack([xy, np.asarray(payload["h"], dtype=float) + float(payload["floor_z"])])
+    out = excluded_mask(levelled @ np.asarray(payload["level_rotation"], dtype=float), own)   # back to the raw frame
+    return payload_subset(payload, ~out) if out.any() else payload
 
 
 def filter_scans(scans: list[Scan], regions: list[Exclusion]) -> list[Scan]:

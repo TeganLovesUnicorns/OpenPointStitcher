@@ -350,18 +350,20 @@ def suggest_tilt(payloads: dict[str, dict], poses: dict[str, ScanPose], locked: 
     return result
 
 
-def full_resolution_inputs(scans_dir: str, payloads: dict[str, dict], names, workers: int = 4) -> dict[str, dict]:
-    """Every point of each named scan, in the levelled frame the preview uses, for suggest_tilt. The solve must not
-    run on the thinned preview, which shifts the answer by tenths of a degree."""
+def full_resolution_inputs(scans_dir: str, payloads: dict[str, dict], names, workers: int = 4,
+                           exclusions: Optional[list] = None) -> dict[str, dict]:
+    """Every point of each named scan, exclusions and review removals cut, in the levelled frame the preview uses,
+    for suggest_tilt. The solve must not run on the thinned preview, which shifts the answer by tenths of a degree."""
     import os
     from concurrent.futures import ThreadPoolExecutor
-    from .pts_file import find_scans, read_pts
+    from .exclusions import levelled_scan
+    from .pts_file import find_scans
     files = {os.path.splitext(os.path.basename(p))[0]: p for p in find_scans(scans_dir, "*.pts")}
 
     def load(name: str):
-        levelled = read_pts(files[name]).points @ np.asarray(payloads[name]["level_rotation"], dtype=float).T
-        return name, {"xy": levelled[:, :2].astype(np.float32),
-                      "h": (levelled[:, 2] - float(payloads[name]["floor_z"])).astype(np.float32)}
+        levelled = levelled_scan(files[name], payloads[name]["level_rotation"], float(payloads[name]["floor_z"]),
+                                 [e for e in exclusions or [] if e.scan == name])
+        return name, {"xy": levelled[:, :2].astype(np.float32), "h": levelled[:, 2].astype(np.float32)}
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         return dict(pool.map(load, [n for n in names if n in files]))

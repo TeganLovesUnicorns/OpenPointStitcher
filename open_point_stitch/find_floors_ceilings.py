@@ -16,13 +16,13 @@ import numpy as np
 import open3d as o3d
 
 from .align_anchors import flat_height_gap
-from .exclusions import filter_scan
+from .exclusions import levelled_scan  # noqa: F401 - callers use find_floors_ceilings.levelled_scan
 from .lib import geometry
-from .lib.clouds import as_cloud
+from .lib.clouds import as_cloud, payload_subset
 from .lib.files import write_json_atomic
-from .lib.poses import ScanPose, levelled_points, world_cloud_points_as_drawn
+from .lib.poses import ScanPose, world_cloud_points_as_drawn
 from .placement import Exclusion
-from .pts_file import find_scans, read_pts
+from .pts_file import find_scans
 
 log = logging.getLogger(__name__)
 
@@ -510,14 +510,6 @@ def cached_pieces(path: str, cache_dir: str, level_rotation, floor_z: float,
     return pieces
 
 
-def levelled_scan(path: str, level_rotation, floor_z: float, exclusions: Optional[list[Exclusion]] = None):
-    """Every point of the scan, exclusions and review removals cut, levelled, its detected floor at height 0."""
-    scan = read_pts(path)
-    if exclusions:
-        scan = filter_scan(scan, exclusions)
-    return levelled_points(scan.points, level_rotation, floor_z)
-
-
 def pieces_for_scans(scans_dir: str, cache_dir: str, payloads: dict[str, dict], saved: dict,
                      names, progress=None) -> dict[str, list[dict]]:
     """{name: pieces} for each named scan that has a preview; a scan that fails is left out and logged. Works in
@@ -598,12 +590,6 @@ def solve_heights(gaps: dict[tuple[str, str], tuple[int, float]], names: Iterabl
 MARK_BAND_M = 0.06      # a scan with a marked floor or ceiling settles on points this close to the marks only
 
 
-def _payload_where(payload: dict, keep: np.ndarray) -> dict:
-    """The payload with only its preview points where keep is True."""
-    xy = np.asarray(payload["xy"], dtype=float).reshape(-1, 2)
-    return {**payload, "xy": xy[keep].ravel(), "h": np.asarray(payload["h"], dtype=float)[keep]}
-
-
 def marked_payload(payload: dict, heights: list[float]) -> dict:
     """The payload's preview points within MARK_BAND_M of any marked height (scan frame), so tables and seats cannot
     pair as floor."""
@@ -611,14 +597,14 @@ def marked_payload(payload: dict, heights: list[float]) -> dict:
     keep = np.zeros(len(h), dtype=bool)
     for m in heights:
         keep |= np.abs(h - m) <= MARK_BAND_M
-    return _payload_where(payload, keep)
+    return payload_subset(payload, keep)
 
 
 def pieces_payload(payload: dict, pieces: list[dict]) -> dict:
     """The payload's preview points on the scan's found floor and ceiling pieces only (several floor levels and
     sloped ceilings included, counters and tables not)."""
     xy = np.asarray(payload["xy"], dtype=float).reshape(-1, 2)
-    return _payload_where(payload, on_pieces(xy, np.asarray(payload["h"], dtype=float), pieces, MARK_BAND_M))
+    return payload_subset(payload, on_pieces(xy, np.asarray(payload["h"], dtype=float), pieces, MARK_BAND_M))
 
 
 def without_stairs(payload: dict) -> dict:
@@ -628,7 +614,7 @@ def without_stairs(payload: dict) -> dict:
         return payload
     keep = np.ones(len(payload["h"]), dtype=bool)
     keep[np.asarray(payload["stairs"], dtype=int)] = False
-    return _payload_where(payload, keep)
+    return payload_subset(payload, keep)
 
 
 def settle(payloads: dict[str, dict], poses: dict[str, ScanPose], fixed: set[str],

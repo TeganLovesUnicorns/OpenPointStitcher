@@ -19,6 +19,7 @@ from .lib.geometry import points_in_box
 from .lib.groups import connected_groups
 from .lib.poses import (ScanPose, raw_to_world_point, raw_to_world_points, solve_yaw_translation, tilt_of,
                         world_cloud_points_as_drawn, yaw_gap_deg, yaw_of, yaw_transform)
+from .exclusions import filter_scan
 from .pts_file import find_scans, read_pts
 
 log = logging.getLogger(__name__)
@@ -63,10 +64,11 @@ class AlignResult:
     n_anchors_completed: int = 0        # anchors actually processed, whether or not cancelled
 
 
-def full_res_region(scans_folder: str, member, cache: dict, margin_m: float = 0.0) -> Optional[np.ndarray]:
+def full_res_region(scans_folder: str, member, cache: dict, margin_m: float = 0.0,
+                    exclusions: Optional[list] = None) -> Optional[np.ndarray]:
     """Every full-resolution point (the scan file's raw frame) inside a link member's box, grown by margin_m on
-    every side. None if the scan file cannot be read (logged); the caller then uses the preview. cache maps scan
-    name to its points, so each file is read once per run."""
+    every side, exclusions and review removals cut. None if the scan file cannot be read (logged); the caller then
+    uses the preview. cache maps scan name to its points, so each file is read once per run."""
     try:
         if member.scan not in cache:
             matches = [p for p in find_scans(scans_folder, "*.pts")
@@ -74,7 +76,7 @@ def full_res_region(scans_folder: str, member, cache: dict, margin_m: float = 0.
             if not matches:
                 log.warning("no scan file named %r in %s, so anchors on it use the preview points",
                             member.scan, scans_folder)
-            cache[member.scan] = read_pts(matches[0]).points if matches else None
+            cache[member.scan] = filter_scan(read_pts(matches[0]), exclusions or []).points if matches else None
         pts = cache[member.scan]
         if pts is None:
             return None
@@ -359,6 +361,7 @@ def align_from_anchors(
     progress_cb: Optional[Callable[[int, int], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
     reference_scan: Optional[str] = None,
+    exclusions: Optional[list] = None,   # exclusion regions and review removals, cut from the full-resolution boxes
 ) -> AlignResult:
     """Match every link pair (4 DOF ICP seeded from the link's region, on full-resolution box points when
     scans_folder has them) against the current poses, gate on tilt, fitness and a shift limit, then solve all
@@ -384,7 +387,7 @@ def align_from_anchors(
     def region_of(member, member_index_in_anchor, anchor_id, margin_m=0.0) -> Optional[np.ndarray]:
         key = (anchor_id, member_index_in_anchor, margin_m)
         if key not in region_cache:
-            region_cache[key] = (full_res_region(scans_folder, member, scan_points_cache, margin_m)
+            region_cache[key] = (full_res_region(scans_folder, member, scan_points_cache, margin_m, exclusions)
                                  if scans_folder else None)
         return region_cache[key]
 

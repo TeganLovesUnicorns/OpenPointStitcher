@@ -52,7 +52,7 @@ from open_point_stitch.lib.poses import (ScanPose, carry_pose, common_motion, po
                                         yaw_matrix3, yaw_of, yaw_transform)
 from open_point_stitch.export_plan import default_band, footprints_from_payloads, plan_cut, write_plan
 from open_point_stitch.wall_checks import measure_walls, summarise as summarise_walls
-from open_point_stitch.exclusions import filter_scans, for_export
+from open_point_stitch.exclusions import filter_scans, for_export, payload_without_excluded
 from open_point_stitch.align_points import seed_key
 from open_point_stitch.pair_filter import candidate_pairs
 from open_point_stitch import pair_filter
@@ -339,23 +339,25 @@ def _compute_deviation(app: "App") -> dict:
     return {"ready": True, "deviation_m": deviation_m}
 
 
-def _tilt_inputs(app: "App", payloads: dict) -> dict:
-    """Every point of each scan, not the thinned preview, loaded once per open project. The tilt solve needs full
-    resolution."""
+def _tilt_inputs(app: "App", payloads: dict, exclusions: list) -> dict:
+    """Every point of each scan, not the thinned preview, exclusions and review removals cut; loaded once per open
+    project and again for a scan whose exclusions changed. The tilt solve needs full resolution."""
+    def cut_by(n: str) -> tuple:
+        return tuple(sorted(e.id for e in exclusions if e.scan == n))
     with app._tilt_lock:
-        missing = [n for n in payloads if n not in app._tilt_inputs]
+        missing = [n for n in payloads if app._tilt_inputs.get(n, (None,))[0] != cut_by(n)]
         if missing:
-            app._tilt_inputs.update(full_resolution_inputs(app.scans_dir, payloads, missing))
-        return {n: app._tilt_inputs[n] for n in payloads if n in app._tilt_inputs}
+            for n, pts in full_resolution_inputs(app.scans_dir, payloads, missing, exclusions=exclusions).items():
+                app._tilt_inputs[n] = (cut_by(n), pts)
+        return {n: app._tilt_inputs[n][1] for n in payloads if n in app._tilt_inputs}
 
 
 def _compute_tilt_suggestion(app: "App", body: dict) -> dict:
     """Suggested height, pitch and roll per scan from floor and ceiling agreement, starting from the poses the page
     holds now (body["scans"]) or else the saved placement. Writes nothing."""
-    given = body.get("scans")
-    if not given:
-        data = _read_placement(app.out_dir)
-        given = (data or {}).get("scans", [])
+    saved = _read_placement(app.out_dir) or {}
+    given = body.get("scans") or saved.get("scans", [])
+    exclusions = [Exclusion.from_dict(e) for e in saved.get("exclusions", [])]
     poses: dict[str, ScanPose] = {}
     locked: dict[str, bool] = {}
     for s in given:
@@ -372,9 +374,11 @@ def _compute_tilt_suggestion(app: "App", body: dict) -> dict:
         return {"ready": False, "reason": "need at least two placed, built scans"}
 
     picked = body.get("scan_names")
-    result = suggest_tilt(_tilt_inputs(app, payloads), poses, locked=locked, subset=set(picked) if picked else None)
-    near_before = near_share(payloads, poses)
-    near_after = near_share(payloads, apply_suggestions(poses, result))
+    result = suggest_tilt(_tilt_inputs(app, payloads, exclusions), poses, locked=locked,
+                          subset=set(picked) if picked else None)
+    cut = {n: payload_without_excluded(p, exclusions) for n, p in payloads.items()}
+    near_before = near_share(cut, poses)
+    near_after = near_share(cut, apply_suggestions(poses, result))
     return {
         "ready": True,
         "suggestions": [vars(s) for s in result.suggestions.values()],
@@ -613,8 +617,11 @@ def _run_align(app: "App", job_id: str, params: dict) -> None:
     def progress_cb(done: int, total: int) -> None:
         app.jobs.set_progress(job_id, "aligning", f"{done}/{total} anchor(s)")
 
+    exclusions = [Exclusion.from_dict(e) for e in data.get("exclusions", [])]
+    with app._lock:
+        align_payloads = {n: payload_without_excluded(p, exclusions) for n, p in app.payloads.items()}
     with cap:
-        result = align_from_anchors(app.payloads, poses, anchors, locked, subset_set,
+        result = align_from_anchors(align_payloads, poses, anchors, locked, subset_set, exclusions=exclusions,
                                     scans_folder=app.scans_dir, max_shift_m=max_shift,
                                     reference_scan=params.get("reference_scan") or data.get("reference_scan"),
                                     progress_cb=progress_cb,
@@ -994,6 +1001,9 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
             scans = filter_scans(scans, exclusions)
             log.info("automatic align: %d exclusion region(s) applied across %d scan(s)",
                      len(exclusions), len({e.scan for e in exclusions}))
+        # Every later step that reads preview points (links, height settle) sees them with the same cuts.
+        with app._lock:
+            align_payloads = {n: payload_without_excluded(p, exclusions) for n, p in app.payloads.items()}
 
         threads = params.get("threads")
         concurrency = max(1, int(params.get("concurrency", 1)))
@@ -1343,7 +1353,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                     anchor_locked[s["name"]] = bool(s.get("locked", False))
                 # Not the library's 8 m default: this refines an already-seeded position, and 8 m allowed runaway moves.
                 anchor_result = align_from_anchors(
-                    app.payloads, anchor_poses, stage2_anchors, anchor_locked, None,
+                    align_payloads, anchor_poses, stage2_anchors, anchor_locked, None, exclusions=exclusions,
                     scans_folder=app.scans_dir, max_shift_m=float(params.get("max_shift_m", LINKS_MAX_SHIFT_M)),
                     reference_scan=root_name,
                     progress_cb=lambda done, total: app.jobs.set_progress(
@@ -1393,7 +1403,7 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                     [s["name"] for s in data["scans"]],
                     progress=lambda i, n, name: app.jobs.set_progress(
                         job_id, "finding each scan's floors and ceilings", f"{i + 1}/{n}: {name}"))
-            settle_dz, settle_gaps = find_floors_ceilings.settle(app.payloads, settle_poses, locked_names,
+            settle_dz, settle_gaps = find_floors_ceilings.settle(align_payloads, settle_poses, locked_names,
                                                           only=set(pose_updates) - locked_names, marks=floor_marks,
                                                           pieces=settle_pieces,
                                                           along_normal=bool(params.get("settle_along_normal", True)))
