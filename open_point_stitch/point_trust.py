@@ -29,6 +29,14 @@ def surface_thickness(p: Prepared, cfg: PipelineConfig) -> np.ndarray:
     return _THICKNESS[key]
 
 
+def ladder_tukey_base(tgt: Prepared, cfg: PipelineConfig) -> Optional[float]:
+    """Twice the target's typical surface thickness, the base of every ICP step's Tukey window, or None with
+    thickness trust off. Each step uses max(this, step reach / 3) so coarse steps can still close a big gap."""
+    if not cfg.thickness_trust or cfg.icp_method == "point_to_point":
+        return None
+    return 2.0 * max(float(np.median(surface_thickness(tgt, cfg))), THICK_FLOOR_M / 2)
+
+
 _COUNTS: dict = {}          # (scan name, point count) -> neighbours of each point within MIDAIR_RADIUS_VOXELS
 _MIDAIR: dict = {}          # (scan name, point count) -> per-point mid-air weight of its prepared cloud
 MIDAIR_RADIUS_VOXELS = 3.0  # neighbours counted within this many voxels

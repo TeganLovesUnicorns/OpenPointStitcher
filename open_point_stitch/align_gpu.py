@@ -18,6 +18,7 @@ from .align_gravity import coarse_candidates
 from .align_pair import PairResult, _information_matrix, _reject_reason_from_gates, interpenetration
 from .config import PipelineConfig
 from .find_walls import wall_candidates
+from .point_trust import ladder_tukey_base, point_weight
 from .lib.poses import solve_yaw_translation, yaw_transform
 from .prepare import Prepared
 from .score import Verdict, build_target_index, score_candidate_fast
@@ -244,9 +245,12 @@ def _evaluate(src: GpuCloud, tgt: GpuCloud, index, T: np.ndarray, radius: float)
 _PAIRS = [(i, j) for i in range(6) for j in range(i, 6)]        # the 21 distinct entries of the symmetric 6x6
 
 
-def _evaluate_batch(src: GpuCloud, tgt: GpuCloud, index, transforms: np.ndarray, radius: float):
+def _evaluate_batch(src: GpuCloud, tgt: GpuCloud, index, transforms: np.ndarray, radius: float,
+                    tukey_k: float | None = None, src_w=None, tgt_w=None):
     """`_evaluate` for K starting poses at once, so the fixed cost of a GPU call is shared K ways. Rows of every working
-    tensor are ordered (source point, candidate). Returns (A K x 6 x 6, b K x 6, counts K, squared distances K)."""
+    tensor are ordered (source point, candidate). Each pairing in A and b is weighted like Open3D's robust ICP: Tukey on
+    its residual (if tukey_k) times both points' weights (if given); counts and distances stay unweighted.
+    Returns (A K x 6 x 6, b K x 6, counts K, squared distances K)."""
     k, n = transforms.shape[0], src.n
     dev = src.device
     rot = np.ascontiguousarray(np.concatenate([transforms[i, :3, :3].T for i in range(k)], axis=1))       # 3 x 3K
@@ -262,11 +266,24 @@ def _evaluate_batch(src: GpuCloud, tgt: GpuCloud, index, transforms: np.ndarray,
     mx, my, mz = moved[:, 0], moved[:, 1], moved[:, 2]
     nx, ny, nz = nrm[:, 0], nrm[:, 1], nrm[:, 2]
     jac = [(my * nz - mz * ny) * w, (mz * nx - mx * nz) * w, (mx * ny - my * nx) * w, nx * w, ny * w, nz * w]
+    weight = None
+    if tukey_k is not None:
+        e = r / tukey_k
+        u = (1.0 - e * e).clip(0.0, 1.0)
+        weight = u * u
+    if src_w is not None:
+        per_row = (src_w.reshape((n, 1)) * o3d.core.Tensor.ones((1, k), F64, dev)).reshape((n * k,))
+        weight = per_row if weight is None else weight * per_row
+    if tgt_w is not None:
+        weight = tgt_w[idx] if weight is None else weight * tgt_w[idx]
 
     def per_candidate(t):
         return t.reshape((n, k)).sum(0).reshape((1, k))
 
-    rows = [per_candidate(jac[i] * jac[j]) for i, j in _PAIRS] + [per_candidate(jac[i] * r) for i in range(6)]
+    def weighted(t):
+        return t if weight is None else t * weight
+
+    rows = [per_candidate(weighted(jac[i] * jac[j])) for i, j in _PAIRS] + [per_candidate(weighted(jac[i] * r)) for i in range(6)]
     rows += [per_candidate(w), per_candidate((diff * diff).sum(1) * w)]
     out = o3d.core.concatenate(rows, axis=0).cpu().numpy()                    # 29 x K, one transfer
     a = np.zeros((k, 6, 6))
@@ -276,13 +293,16 @@ def _evaluate_batch(src: GpuCloud, tgt: GpuCloud, index, transforms: np.ndarray,
 
 
 def icp_point_to_plane_batch(src: GpuCloud, tgt: GpuCloud, inits: list, max_dist: float, max_iteration: int = 60,
-                             relative_fitness: float = 1e-6, relative_rmse: float = 1e-6) -> list:
+                             relative_fitness: float = 1e-6, relative_rmse: float = 1e-6,
+                             tukey_k: float | None = None, src_w=None, tgt_w=None) -> list:
     """`icp_point_to_plane` for several starting poses at once. Each one stops on its own test, exactly as it would alone.
-    Returns one (4x4, fitness, inlier rmse, match count) per start."""
+    tukey_k, src_w and tgt_w weight the pairings (`_evaluate_batch`). Returns one (4x4, fitness, inlier rmse, match
+    count) per start."""
     k = len(inits)
     index = tgt.index(max_dist)
     trans = np.array([np.asarray(t, dtype=np.float64) for t in inits])
-    a, b, count, sum_d2 = _evaluate_batch(src, tgt, index, trans, max_dist)
+    weights = {"tukey_k": tukey_k, "src_w": src_w, "tgt_w": tgt_w}
+    a, b, count, sum_d2 = _evaluate_batch(src, tgt, index, trans, max_dist, **weights)
     fitness = count / src.n
     rmse = np.where(count > 0, np.sqrt(sum_d2 / np.maximum(count, 1.0)), 0.0)
     active = np.ones(k, dtype=bool)
@@ -297,7 +317,8 @@ def icp_point_to_plane_batch(src: GpuCloud, tgt: GpuCloud, inits: list, max_dist
         if live.size == 0:
             break
         prev_fitness, prev_rmse = fitness[live].copy(), rmse[live].copy()
-        a[live], b[live], count[live], sum_d2[live] = _evaluate_batch(src, tgt, index, trans[live], max_dist)      # only those still moving
+        a[live], b[live], count[live], sum_d2[live] = _evaluate_batch(src, tgt, index, trans[live], max_dist,
+                                                                      **weights)      # only those still moving
         fitness[live] = count[live] / src.n
         rmse[live] = np.where(count[live] > 0, np.sqrt(sum_d2[live] / np.maximum(count[live], 1.0)), 0.0)
         done = (np.abs(prev_fitness - fitness[live]) < relative_fitness) & (np.abs(prev_rmse - rmse[live]) < relative_rmse)
@@ -308,22 +329,33 @@ def icp_point_to_plane_batch(src: GpuCloud, tgt: GpuCloud, inits: list, max_dist
 def ladder_batch(src_prepared, tgt_prepared, inits: list, cfg, coarse_from: float = 2.0, max_iteration: int | None = None) -> list:
     """The coarse-to-fine ICP ladder (`cfg.local_only_icp_distance_mults`) for several starting poses at once. Rungs whose
     window is `coarse_from` voxels or wider run on a 2x coarser copy of both clouds, the finer rungs on the full ones.
+    Pairings are weighted as the CPU ladder weights them (thickness trust's Tukey window on every rung; mid-air and
+    learned trust on the full-cloud rungs, since the coarse copies have no per-point weights).
     Returns one (4x4, fitness, inlier rmse, match count) per start, from the last rung."""
     iterations = cfg.icp_max_iteration if max_iteration is None else max_iteration
     full_src, full_tgt = cloud_for(src_prepared), cloud_for(tgt_prepared)
     coarse_src = coarse_for(src_prepared, 2.0 * cfg.voxel_size)
     coarse_tgt = coarse_for(tgt_prepared, 2.0 * cfg.voxel_size)
+    base = ladder_tukey_base(tgt_prepared, cfg)
+    ws, wt = point_weight(src_prepared, cfg), point_weight(tgt_prepared, cfg)
+    if ws is not None or wt is not None:
+        ws = o3d.core.Tensor(np.ones(full_src.n) if ws is None else np.asarray(ws, dtype=np.float64), F64, full_src.device)
+        wt = o3d.core.Tensor(np.ones(full_tgt.n) if wt is None else np.asarray(wt, dtype=np.float64), F64, full_tgt.device)
+
+    def rung(src, tgt, start, dist):
+        full = src is full_src
+        return icp_point_to_plane_batch(src, tgt, start, dist, iterations, tukey_k=None if base is None else max(base, dist / 3),
+                                        src_w=ws if full else None, tgt_w=wt if full else None)
+
     current = [np.asarray(t, dtype=np.float64) for t in inits]
     out = None
     for mult in cfg.local_only_icp_distance_mults:
         wide = mult >= coarse_from
-        out = icp_point_to_plane_batch(coarse_src if wide else full_src, coarse_tgt if wide else full_tgt, current,
-                                       cfg.voxel_size * mult, iterations)
+        out = rung(coarse_src if wide else full_src, coarse_tgt if wide else full_tgt, current, cfg.voxel_size * mult)
         current = [o[0] for o in out]
     if cfg.local_only_icp_distance_mults and cfg.local_only_icp_distance_mults[-1] >= coarse_from:
         # every rung was wide: finish on the full clouds so the reported fitness is the same number the CPU reports
-        out = icp_point_to_plane_batch(full_src, full_tgt, current, cfg.voxel_size * cfg.local_only_icp_distance_mults[-1],
-                                       iterations)
+        out = rung(full_src, full_tgt, current, cfg.voxel_size * cfg.local_only_icp_distance_mults[-1])
     return out
 
 

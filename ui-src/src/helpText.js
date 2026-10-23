@@ -29,8 +29,8 @@ export const SETTINGS_HELP = [
  },
  {
   anchor: "cbGpuCpuCheck",
-  heading: "... and double-check its answers on the processor",
-  html: "Only applies to \"Run from my alignment\" with the GPU on. For each pair of scans, the graphics card tries every starting position at once and keeps the one whose walls, floors and corners agree best. <b>Off (the default):</b> that is the answer. <b>On:</b> the processor repeats the card's two best answers more carefully, from the same starting positions, and its answer is used instead. Measured on both test venues against hand-measured positions, the card's answer was just as accurate (every check passed, worst scan 24 cm against 26 cm on the larger venue), and runs took about half as long: 11 minutes against 24, and 3.5 against 5.5. Turn it on to compare, or if a venue comes out worse without it. Pairs the card cannot take (no card, or another program has filled it) run on the processor either way."
+  heading: "... and double-check its answers carefully",
+  html: "Only applies to \"Run from my alignment\" with the GPU on. For each pair of scans, the graphics card tries every starting position at once and keeps the one whose walls, floors and corners agree best. <b>Off (the default):</b> that is the answer. <b>On:</b> the card's two best answers are repeated at full detail from the same starting positions, every step, exactly as the processor would do it (the card gives the processor's answer to the digit, much faster), and that answer is used instead. When the card is busy or missing the processor does it. Measured on both test venues against hand-measured positions, the quick answer was just as accurate (every check passed), and runs took about three quarters as long: 11.5 minutes against 16, and 3.5 against 4.5. Turn it on to compare, or if a venue comes out worse without it. Pairs the card cannot take (no card, or another program has filled it) run on the processor either way."
  },
  {
   anchor: "levelTilt",

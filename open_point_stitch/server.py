@@ -1395,7 +1395,8 @@ def _run_align_auto(app: "App", job_id: str, params: dict) -> None:
                         job_id, "finding each scan's floors and ceilings", f"{i + 1}/{n}: {name}"))
             settle_dz, settle_gaps = find_floors_ceilings.settle(app.payloads, settle_poses, locked_names,
                                                           only=set(pose_updates) - locked_names, marks=floor_marks,
-                                                          pieces=settle_pieces)
+                                                          pieces=settle_pieces,
+                                                          along_normal=bool(params.get("settle_along_normal", False)))
             for name, d in settle_dz.items():
                 pose_updates[name]["z_m"] = round(settle_poses[name].z_m + d, 5)
             height_stage = {"n_pairs": len(settle_gaps), "dz_m": {n: round(d, 4) for n, d in settle_dz.items()},

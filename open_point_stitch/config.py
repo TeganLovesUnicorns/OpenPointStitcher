@@ -112,7 +112,7 @@ class PipelineConfig:
     use_gpu_ladder: bool = False
     gpu_verify_top: int = 2
     gpu_screen_iterations: int = 30
-    # With the GPU screen on, the CPU repeats the best gpu_verify_top candidates and its answer is final.
+    # With the GPU screen on, the full ladder repeats the best gpu_verify_top candidates and its answer is final.
     gpu_cpu_check: bool = False
     # Starting poses from matched landmarks (find_landmarks).
     use_landmarks: bool = False

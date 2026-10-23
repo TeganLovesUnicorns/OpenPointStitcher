@@ -93,6 +93,29 @@ def test_a_batch_gives_each_start_the_answer_it_would_get_alone_and_repeats_exac
         assert np.abs(alone[0] - got[0]).max() < 1e-5 and abs(alone[1] - got[1]) < 1e-6, "a batch changed a start's answer"
 
 
+def test_the_full_gpu_ladder_weights_pairings_the_way_the_cpu_ladder_does():
+    """With thickness trust the card's full-resolution ladder is Open3D's Tukey ICP to rounding; with mid-air trust too
+    it is within a hundredth of a millimetre of the CPU's own weighted step."""
+    if not _card():
+        print("    SKIP: no usable GPU here")
+        return
+    import dataclasses
+    from open_point_stitch.align_gpu import ladder_batch
+    from open_point_stitch.align_pair import fine_register_ladder
+    a, b, cfg = _pair()
+    off = np.eye(4)
+    off[:2, 3] = (0.12, -0.05)
+    for kw, tol_cm in (({"thickness_trust": True}, 1e-6), ({"thickness_trust": True, "midair_trust": True}, 0.01)):
+        c = dataclasses.replace(cfg, **kw)
+        cpu = np.asarray(fine_register_ladder(a, b, off, c).transformation)
+        gpu = ladder_batch(a, b, [off], c, coarse_from=float("inf"))[0][0]
+        plain = ladder_batch(a, b, [off], cfg, coarse_from=float("inf"))[0][0]
+        apart = np.linalg.norm(gpu[:3, 3] - cpu[:3, 3]) * 100.0
+        assert apart < tol_cm, f"{kw}: the card's weighted ladder is {apart:.6f} cm from the CPU's"
+        assert not np.array_equal(gpu, plain), f"{kw}: the weights changed nothing"
+        print(f"    {'+'.join(kw)}: {apart:.6f} cm from the CPU ladder")
+
+
 def _run(a, b, cfg, init):
     return register_pair(a, b, cfg, init=init, seeded_from="manual", local_only=True)
 
@@ -122,6 +145,13 @@ def test_the_screen_and_confirm_path_returns_the_cpus_answer_for_its_winner():
     off[:2, 3] = (0.12, -0.05)                                    # a placement that is a little off
     cpu = _run(a, b, cfg, off)
     gpu = _run(a, b, PipelineConfig(use_gpu_ladder=True, gpu_cpu_check=True), off)
+    align_pair._gpu_ready, real_ready = (lambda: False), align_pair._gpu_ready
+    try:                                                          # the same check with the card gone after the screen
+        on_cpu = align_pair._careful_ladders(a, b, [off], cfg)[0][0]
+    finally:
+        align_pair._gpu_ready = real_ready
+    on_card = align_pair._careful_ladders(a, b, [off], cfg)[0][0]
+    assert np.linalg.norm(on_card[:3, 3] - on_cpu[:3, 3]) < 1e-8, "the full ladder differs between card and CPU"
     assert gpu.gpu_screened is True and gpu.gpu_verified >= 1, (gpu.gpu_screened, gpu.gpu_verified)
     assert gpu.accepted == cpu.accepted and gpu.method == cpu.method, (gpu.method, cpu.method)
     assert np.linalg.norm(gpu.transform[:3, 3] - cpu.transform[:3, 3]) < 0.01, "the confirmed winner is not the CPU's answer"

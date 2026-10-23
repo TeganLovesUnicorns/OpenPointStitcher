@@ -27,8 +27,8 @@ from .prepare import Prepared, aabb, density_preserving_thin, thin_rng
 from . import score as _verify
 from .overlap import direct_overlap
 from . import explain as _why
-from .point_trust import (_MIDAIR, MIDAIR_MIN_W, THICK_FLOOR_M, midair_weight, point_weight,  # noqa: F401
-                          surface_thickness)
+from .point_trust import (_MIDAIR, MIDAIR_MIN_W, THICK_FLOOR_M, ladder_tukey_base, midair_weight,  # noqa: F401
+                          point_weight, surface_thickness)
 
 log = logging.getLogger(__name__)
 
@@ -232,10 +232,7 @@ def fine_register_ladder(src: Prepared, tgt: Prepared, init: np.ndarray, cfg: Pi
         estimation = reg.TransformationEstimationPointToPoint(False)
     else:
         estimation = reg.TransformationEstimationPointToPlane()
-    # Residuals beyond twice this pair's typical surface thickness count for less, never tighter than a third of
-    # the step's reach, so coarse steps can still close a big gap.
-    thick = (2.0 * max(float(np.median(surface_thickness(tgt, cfg))), THICK_FLOOR_M / 2)
-             if cfg.thickness_trust and cfg.icp_method != "point_to_point" else None)
+    thick = ladder_tukey_base(tgt, cfg)
 
     current = np.asarray(init, dtype=np.float64)
     result = None
@@ -678,6 +675,18 @@ def _gpu_screen(src: Prepared, tgt: Prepared, candidates: list, cfg: PipelineCon
         return None
 
 
+def _careful_ladders(src: Prepared, tgt: Prepared, starts: list, cfg: PipelineConfig) -> list:
+    """The full-resolution ladder for each start, as (4x4, fitness, rmse, matches): all at once on the card when it is
+    free (the same answer as the CPU ladder), otherwise one by one on the CPU."""
+    if _gpu_ready() and not card_full_now():
+        try:
+            from .align_gpu import ladder_batch
+            return [tuple(r) for r in ladder_batch(src, tgt, starts, cfg, coarse_from=float("inf"))]
+        except Exception as exc:  # noqa: BLE001 - a GPU problem must not fail the pair
+            log.warning("%s -> %s: GPU ladder failed (%s), using the CPU", src.name, tgt.name, exc)
+    return [_score(src, tgt, start, cfg, local_only=True) for start in starts]
+
+
 def pair_search_voxel(src: Prepared, tgt: Prepared, cfg: PipelineConfig) -> Optional[float]:
     """The voxel size for this pair's candidate search: cfg.search_voxel_size, or with adaptive_search_voxel on,
     never finer than adaptive_voxel_spacings point spacings of the sparser scan (rounded up to a centimetre)."""
@@ -916,8 +925,8 @@ def register_pair(
             if best is None or verdict.vote_score > best_vote_score:
                 best, best_verdict, best_vote_score = entry, verdict, verdict.vote_score
     else:
-        # The GPU refined every candidate at once and its best is the answer. With gpu_cpu_check the CPU repeats the
-        # ladder for the best few from their original starting poses instead, and its answer is final.
+        # The GPU refined every candidate at once and its best is the answer. With gpu_cpu_check the full ladder is
+        # repeated for the best few from their original starting poses instead, and its answer is final.
         report(f"scoring {len(candidates)} GPU-screened candidate(s)")
         ranked, entries = [], {}
         for k, (origin, _start) in enumerate(candidates):
@@ -936,20 +945,21 @@ def register_pair(
                 best_vote_score = best_verdict.vote_score
             ranked = []
         else:
-            report(f"verifying the top {cfg.gpu_verify_top} on the CPU")
-        for _neg, k in ranked:
-            if res.gpu_verified >= cfg.gpu_verify_top or ladders >= 2 * cfg.gpu_verify_top:
-                break
-            origin, start = candidates[k]
-            refined = _score(src, tgt, start, cfg, local_only=local_only)
-            ladders += 1
-            status, entry, verdict = consider(origin, refined)
-            if status != "ok":
-                continue                                    # the CPU disagrees with the screen: try the next one
-            res.gpu_verified += 1
-            if best is None or verdict.vote_score > best_vote_score:
-                best, best_verdict, best_vote_score, best_k = entry, verdict, verdict.vote_score, k
-                res.gpu_vs_cpu_cm = float(np.linalg.norm(np.asarray(screen[k][0])[:3, 3] - refined[0][:3, 3])) * 100.0
+            report(f"verifying the top {cfg.gpu_verify_top} with the full ladder")
+        queue = [k for _neg, k in ranked]
+        while queue and res.gpu_verified < cfg.gpu_verify_top and ladders < 2 * cfg.gpu_verify_top:
+            # as many as could still be needed, refined together
+            take = min(cfg.gpu_verify_top - res.gpu_verified, 2 * cfg.gpu_verify_top - ladders)
+            batch, queue = queue[:take], queue[take:]
+            for k, refined in zip(batch, _careful_ladders(src, tgt, [candidates[k][1] for k in batch], cfg)):
+                ladders += 1
+                status, entry, verdict = consider(candidates[k][0], refined)
+                if status != "ok":
+                    continue                                # the full ladder disagrees with the screen: try the next one
+                res.gpu_verified += 1
+                if best is None or verdict.vote_score > best_vote_score:
+                    best, best_verdict, best_vote_score, best_k = entry, verdict, verdict.vote_score, k
+                    res.gpu_vs_cpu_cm = float(np.linalg.norm(np.asarray(screen[k][0])[:3, 3] - refined[0][:3, 3])) * 100.0
     rejected_for_tilt, rejected_for_bound, rejected_for_vote = refusals["tilt"], refusals["bound"], refusals["vote"]
     res.confidence, res.confidence_why = _verify.confidence(sorted(scored, key=lambda v: -v.vote_score))
 

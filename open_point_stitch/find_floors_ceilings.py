@@ -556,11 +556,12 @@ FLOOR_M = 0.005         # residuals under this all count the same (the least-abs
 ROUNDS = 30
 
 
-def pair_gaps(world: dict[str, np.ndarray]) -> dict[tuple[str, str], tuple[int, float]]:
-    """{(a, b): (pairs, gap m)} for every scan pair sharing floors or ceilings; gap > 0 means b sits higher."""
+def pair_gaps(world: dict[str, np.ndarray], along_normal: bool = False) -> dict[tuple[str, str], tuple[int, float]]:
+    """{(a, b): (pairs, gap m)} for every scan pair sharing floors or ceilings; gap > 0 means b sits higher.
+    along_normal as in flat_height_gap."""
     out = {}
     for a, b in itertools.combinations(sorted(world), 2):
-        n, gap = flat_height_gap(world[b], world[a])
+        n, gap = flat_height_gap(world[b], world[a], along_normal=along_normal)
         if n >= MIN_PAIRS:
             out[(a, b)] = (n, gap)
     return out
@@ -633,10 +634,11 @@ def without_stairs(payload: dict) -> dict:
 def settle(payloads: dict[str, dict], poses: dict[str, ScanPose], fixed: set[str],
            only: Optional[set[str]] = None,
            marks: Optional[dict[str, list[float]]] = None,
-           pieces: Optional[dict[str, list[dict]]] = None) -> tuple[dict[str, float], dict]:
+           pieces: Optional[dict[str, list[dict]]] = None, along_normal: bool = False) -> tuple[dict[str, float], dict]:
     """(height change per movable scan, the gaps it was solved from). only, if given, limits which scans may move.
     marks holds per-scan floor and ceiling heights marked in review; those scans use only those. pieces holds each
-    scan's found floor and ceiling pieces: an unmarked scan with some uses only points on them."""
+    scan's found floor and ceiling pieces: an unmarked scan with some uses only points on them. along_normal as in
+    flat_height_gap."""
     marks = marks or {}
     pieces = pieces or {}
 
@@ -646,6 +648,6 @@ def settle(payloads: dict[str, dict], poses: dict[str, ScanPose], fixed: set[str
             return marked_payload(pl, marks[n])
         return pieces_payload(pl, pieces[n]) if pieces.get(n) else pl
     world = {n: world_cloud_points_as_drawn(usable(n), p) for n, p in poses.items() if n in payloads}
-    gaps = pair_gaps(world)
+    gaps = pair_gaps(world, along_normal=along_normal)
     hold = set(fixed) | ({n for n in world if n not in only} if only is not None else set())
     return solve_heights(gaps, world, hold), gaps

@@ -3887,42 +3887,49 @@ def test_settings_by_stage_save_reload_and_reach_the_server(page):
 
 def test_one_end_of_an_anchor_can_be_redrawn_without_dropping_it(page):
     """A saved link's end is redrawn with a new box; the other end and the link stay, Undo brings the old end back, and
-    a box on the wrong scan is refused."""
-    _goto(page)
-    rows = page.locator("#scanlist .scan")
-    i0, i1 = int(rows.nth(0).get_attribute("data-i")), int(rows.nth(1).get_attribute("data-i"))
-    page.locator('[data-view="plan"]').click()
-    page.locator('[data-tool="anchor"]').click()
-    rows.nth(0).click()
-    _drag_finish_anchor_region(page, i0)
-    rows.nth(1).click()
-    _drag_finish_anchor_region(page, i1)
-    page.locator("#bFinishAnchor").click()
-    n = page.evaluate("() => anchors.length")
-    before = page.evaluate("() => JSON.stringify(anchors[anchors.length - 1].members.map(m => [m.scan, m.centroid]))")
-    last = n - 1
+    a box on the wrong scan is refused. Puts the project file back."""
+    if not PROJECT_DIR:
+        print("SKIP: PROJECT_DIR not set")
+        return
+    kept = _keep_project_file()
+    try:
+        _goto(page)
+        rows = page.locator("#scanlist .scan")
+        i0, i1 = int(rows.nth(0).get_attribute("data-i")), int(rows.nth(1).get_attribute("data-i"))
+        page.locator('[data-view="plan"]').click()
+        page.locator('[data-tool="anchor"]').click()
+        rows.nth(0).click()
+        _drag_finish_anchor_region(page, i0)
+        rows.nth(1).click()
+        _drag_finish_anchor_region(page, i1)
+        page.locator("#bFinishAnchor").click()
+        n = page.evaluate("() => anchors.length")
+        before = page.evaluate("() => JSON.stringify(anchors[anchors.length - 1].members.map(m => [m.scan, m.centroid]))")
+        last = n - 1
 
-    page.locator(f'[data-redraw="{last}:1"]').click()
-    assert page.evaluate("() => redrawTarget !== null"), "clicking redraw did not arm a redraw"
-    rows.nth(0).click()                                    # the wrong scan: refused, still waiting
-    _drag_finish_anchor_region(page, i0)
-    assert page.evaluate("() => redrawTarget !== null"), "a box on the wrong scan ended the redraw"
-    rows.nth(1).click()
-    pt = _scan_point_screen_pos(page, i1, 0.2)
-    vx, vy = _to_viewport(_canvas_rect(page), (pt["x"], pt["y"]))
-    page.mouse.move(vx - 12, vy - 12)
-    page.mouse.down()
-    page.mouse.move(vx + 12, vy + 12, steps=4)
-    page.mouse.up()
-    after = page.evaluate("() => JSON.stringify(anchors[anchors.length - 1].members.map(m => [m.scan, m.centroid]))")
-    assert page.evaluate("() => anchors.length") == n and page.evaluate("() => redrawTarget === null"), "the redraw did not finish in place"
-    old, new = json.loads(before), json.loads(after)
-    assert old[0] == new[0], "redrawing one end changed the other"
-    assert old[1][0] == new[1][0] and old[1][1] != new[1][1], "the redrawn end kept its old region"
+        page.locator(f'[data-redraw="{last}:1"]').click()
+        assert page.evaluate("() => redrawTarget !== null"), "clicking redraw did not arm a redraw"
+        rows.nth(0).click()                                    # the wrong scan: refused, still waiting
+        _drag_finish_anchor_region(page, i0)
+        assert page.evaluate("() => redrawTarget !== null"), "a box on the wrong scan ended the redraw"
+        rows.nth(1).click()
+        pt = _scan_point_screen_pos(page, i1, 0.2)
+        vx, vy = _to_viewport(_canvas_rect(page), (pt["x"], pt["y"]))
+        page.mouse.move(vx - 12, vy - 12)
+        page.mouse.down()
+        page.mouse.move(vx + 12, vy + 12, steps=4)
+        page.mouse.up()
+        after = page.evaluate("() => JSON.stringify(anchors[anchors.length - 1].members.map(m => [m.scan, m.centroid]))")
+        assert page.evaluate("() => anchors.length") == n and page.evaluate("() => redrawTarget === null"), "the redraw did not finish in place"
+        old, new = json.loads(before), json.loads(after)
+        assert old[0] == new[0], "redrawing one end changed the other"
+        assert old[1][0] == new[1][0] and old[1][1] != new[1][1], "the redrawn end kept its old region"
 
-    page.locator("#bUndo").click()
-    assert page.evaluate("() => JSON.stringify(anchors[anchors.length - 1].members.map(m => [m.scan, m.centroid]))") == before, "Undo did not bring the old end back"
-    print("    redrew one end in place, the other end stayed, a wrong-scan box was refused, Undo restored the old end")
+        page.locator("#bUndo").click()
+        assert page.evaluate("() => JSON.stringify(anchors[anchors.length - 1].members.map(m => [m.scan, m.centroid]))") == before, "Undo did not bring the old end back"
+        print("    redrew one end in place, the other end stayed, a wrong-scan box was refused, Undo restored the old end")
+    finally:
+        _put_back(page, kept)
 
 
 def test_wall_thickness_report_from_the_file_menu(page):

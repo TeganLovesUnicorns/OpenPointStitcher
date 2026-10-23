@@ -3,6 +3,12 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.54.0 (2026-10-23)
+
+- The graphics card now weights each pair the way the processor does: "Trust thin, crisp surfaces" (and the mid-air
+  and learned trust options) apply on the card too, and its full-detail alignment gives the processor's answer.
+- The careful double-check runs on the card when it is free, so runs with it on take about a third less time.
+
 ## 0.53.0 (2026-10-21)
 
 - "Run from my alignment" with the GPU on now takes the graphics card's answer for each pair instead of repeating

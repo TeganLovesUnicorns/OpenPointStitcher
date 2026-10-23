@@ -37,6 +37,8 @@ SEED_KEEP_MARGIN = 0.02     # matching must line up this much MORE of the box th
 FLAT_NZ = 0.9               # a floor or ceiling: its surface faces within about 25 degrees of straight up or down
 FLAT_PAIR_M = 0.5           # the two scans' floors are paired when this close
 MIN_FLAT_PAIRS = 100        # fewer pairs than this and the link does not change height at the start
+PLANE_PAIR_M = 0.3          # along_normal: points paired within this, both on parallel flat surfaces
+PLANE_PARALLEL = 0.98       # ... whose normals agree within about 11 degrees
 
 
 @dataclass
@@ -238,11 +240,25 @@ class _PairFit:
     kept_seed: bool = False             # boxes only: matching did not beat the anchor seed, so the seed stands
 
 
-def flat_height_gap(src_pts: np.ndarray, tgt_pts: np.ndarray) -> tuple[int, float]:
-    """(pairs, median height of src above tgt in m) over tgt's floors and ceilings; (0, nan) if none."""
+def flat_height_gap(src_pts: np.ndarray, tgt_pts: np.ndarray, along_normal: bool = False) -> tuple[int, float]:
+    """(pairs, median height of src above tgt in m) over tgt's floors and ceilings; (0, nan) if none.
+    along_normal: both points must sit on parallel flat surfaces, and the gap is the height above tgt's local
+    surface, so a sloped or raked floor seen a little sideways does not read as a height gap."""
     src = as_cloud(src_pts)
     tgt = as_cloud(tgt_pts)
     tgt.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.15, max_nn=30))
+    if along_normal:
+        src.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.15, max_nn=30))
+        corr = np.asarray(reg.evaluate_registration(src, tgt, PLANE_PAIR_M, np.eye(4)).correspondence_set)
+        if not len(corr):
+            return 0, float("nan")
+        ns, nt = np.asarray(src.normals)[corr[:, 0]], np.asarray(tgt.normals)[corr[:, 1]]
+        keep = (np.abs(nt[:, 2]) >= FLAT_NZ) & (np.abs(ns[:, 2]) >= FLAT_NZ) & (np.abs((ns * nt).sum(1)) >= PLANE_PARALLEL)
+        corr, nt = corr[keep], nt[keep]
+        if not len(corr):
+            return 0, float("nan")
+        d = src_pts[corr[:, 0]] - tgt_pts[corr[:, 1]]
+        return len(corr), float(np.median((d * nt).sum(1) / nt[:, 2]))
     corr = np.asarray(reg.evaluate_registration(src, tgt, FLAT_PAIR_M, np.eye(4)).correspondence_set)
     if len(corr):
         corr = corr[np.abs(np.asarray(tgt.normals)[corr[:, 1], 2]) >= FLAT_NZ]
