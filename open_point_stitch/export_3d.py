@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 
 from .lib import geometry
+from .explain import metres
+from .lib.dxf import DxfWriter
 from .lib.files import write_drawing
 from .lib.groups import connected_groups
 from .placement import Placement, label_points
@@ -185,15 +187,11 @@ def _label(kind: str, sloped: bool, n: np.ndarray, outlines: list[np.ndarray]) -
     z = np.concatenate([o[:, 2] for o in outlines])
     tilt = geometry.angle_between(n, np.array([0, 0, 1.0]))
     if kind == "surface":
-        return f"flat surface {_m(z.min())} to {_m(z.max())} m, tilted {tilt:.0f} deg" if sloped \
-            else f"flat surface {_m(float(np.median(z)))} m"
+        return f"flat surface {metres(z.min())} to {metres(z.max())} m, tilted {tilt:.0f} deg" if sloped \
+            else f"flat surface {metres(float(np.median(z)))} m"
     if sloped:
-        return f"sloped {kind}, {tilt:.0f} deg, {_m(z.min())} to {_m(z.max())} m"
-    return f"{kind} {_m(float(np.median(z)))} m"
-
-
-def _m(v: float) -> str:
-    return f"{v + 0.0:.2f}".replace("-0.00", "0.00")
+        return f"sloped {kind}, {tilt:.0f} deg, {metres(z.min())} to {metres(z.max())} m"
+    return f"{kind} {metres(float(np.median(z)))} m"
 
 
 def _join_walls(walls: list[Surface]) -> list[Surface]:
@@ -231,7 +229,7 @@ def _join_walls(walls: list[Surface]) -> list[Surface]:
         spread = float(np.ptp([s.offset for s in group])) if len(group) > 1 else 0.0
         out.append(Surface(kind="wall", normal=n, offset=off, outlines=[quad],
                            scans=sorted({x for s in group for x in s.scans}), spread_m=spread, wall_kind=a.wall_kind,
-                           label=f"{WALL_WORDS[a.wall_kind]} {float(np.ptp(t)):.2f} m long, {_m(z0)} to {_m(z1)} m"))
+                           label=f"{WALL_WORDS[a.wall_kind]} {float(np.ptp(t)):.2f} m long, {metres(z0)} to {metres(z1)} m"))
     return out
 
 
@@ -252,43 +250,14 @@ def venue_surfaces(per_scan: dict[str, list[Surface]]) -> list[Surface]:
     return sorted(joined, key=lambda s: (order[s.kind], s.label))
 
 
-def _ascii(text: str) -> str:
-    return text.encode("ascii", "replace").decode("ascii")
-
-
 def dxf_text(surfaces: list[Surface], note: str = "", landmarks: list | None = None) -> str:
     """The DXF as text: each surface a closed 3D polyline on its plane, on a layer by kind, with its label; each named
     landmark (placement.LandmarkBox) the bottom and top of its box on LANDMARKS, named once."""
-    out: list[str] = []
-
-    def add(code: int, value) -> None:
-        out.append(f"{code:3d}")
-        out.append(str(value))
-
-    add(0, "SECTION"); add(2, "HEADER"); add(9, "$ACADVER"); add(1, "AC1009")
-    add(9, "$INSBASE"); add(10, 0.0); add(20, 0.0); add(30, 0.0)
-    add(0, "ENDSEC")
-    add(0, "SECTION"); add(2, "TABLES")
-    add(0, "TABLE"); add(2, "LTYPE"); add(70, 1)
-    add(0, "LTYPE"); add(2, "CONTINUOUS"); add(70, 0); add(3, "Solid line"); add(72, 65); add(73, 0); add(40, 0.0)
-    add(0, "ENDTAB")
-    add(0, "TABLE"); add(2, "LAYER"); add(70, len(LAYERS))
-    for name, colour in LAYERS:
-        add(0, "LAYER"); add(2, name); add(70, 0); add(62, colour); add(6, "CONTINUOUS")
-    add(0, "ENDTAB")
-    add(0, "ENDSEC")
-    add(0, "SECTION"); add(2, "ENTITIES")
-    def poly3d(o: np.ndarray, layer: str) -> None:
-        add(0, "POLYLINE"); add(8, layer); add(66, 1); add(10, 0.0); add(20, 0.0); add(30, 0.0)
-        add(70, 9)                                               # closed (1) and 3D (8)
-        for x, y, z in o:
-            add(0, "VERTEX"); add(8, layer); add(10, f"{x:.4f}"); add(20, f"{y:.4f}"); add(30, f"{z:.4f}")
-            add(70, 32)                                          # a 3D polyline's vertex
-        add(0, "SEQEND"); add(8, layer)
+    dxf = DxfWriter(LAYERS)
+    poly3d = dxf.polyline3d
 
     def label(c, height: float, value: str, layer: str) -> None:
-        add(0, "TEXT"); add(8, layer); add(10, f"{c[0]:.4f}"); add(20, f"{c[1]:.4f}"); add(30, f"{c[2]:.4f}")
-        add(40, height); add(1, _ascii(value))
+        dxf.label(c[0], c[1], c[2], height, value, layer)
 
     for s in surfaces:
         for o in s.outlines:
@@ -302,11 +271,9 @@ def dxf_text(surfaces: list[Surface], note: str = "", landmarks: list | None = N
         label(c, 0.15, text, "LANDMARKS")
     if surfaces:
         lo = np.min([o.min(axis=0) for s in surfaces for o in s.outlines], axis=0)
-        add(0, "TEXT"); add(8, "INFO"); add(10, f"{lo[0]:.4f}"); add(20, f"{lo[1] - 1.0:.4f}"); add(30, f"{lo[2]:.4f}")
-        add(40, 0.4); add(1, _ascii("Floors, ceilings and walls as 3D planes, units metres" + (f", {note}" if note else "")))
-    add(0, "ENDSEC")
-    add(0, "EOF")
-    return "\n".join(out) + "\n"
+        dxf.label(lo[0], lo[1] - 1.0, lo[2], 0.4,
+                  "Floors, ceilings and walls as 3D planes, units metres" + (f", {note}" if note else ""), "INFO")
+    return dxf.text()
 
 
 def preview_png(surfaces: list[Surface], px_per_m: float = 40.0) -> bytes:

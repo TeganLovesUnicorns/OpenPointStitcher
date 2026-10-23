@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from .exclusions import filter_scan
+from .lib.dxf import DxfWriter
 from .lib.files import write_drawing
 from .lib.poses import tilt_matrix3
 from .placement import Exclusion, Placement, label_points
@@ -137,46 +138,16 @@ def footprints_from_payloads(payloads: dict[str, dict], placements: dict[str, Pl
 
 
 # --- the DXF file itself -------------------------------------------------------------------------------
-# R12 ASCII: the oldest form every CAD program reads, no handles or object tables to get wrong.
-
 LAYERS = (("PLAN_CUT", 7), ("SCAN_FOOTPRINTS", 8), ("SCAN_NAMES", 3), ("LANDMARKS", 3), ("INFO", 2))
-
-
-def _ascii(text: str) -> str:
-    return text.encode("ascii", "replace").decode("ascii")
 
 
 def dxf_text(cut: PlanCut, note: str = "") -> str:
     """The DXF as text. Layers: PLAN_CUT (the traced outlines), SCAN_FOOTPRINTS, SCAN_NAMES, INFO."""
-    out: list[str] = []
-
-    def add(code: int, value) -> None:
-        out.append(f"{code:3d}")
-        out.append(str(value))
-
-    add(0, "SECTION"); add(2, "HEADER"); add(9, "$ACADVER"); add(1, "AC1009")
-    add(9, "$INSBASE"); add(10, 0.0); add(20, 0.0); add(30, 0.0)
-    add(0, "ENDSEC")
-    add(0, "SECTION"); add(2, "TABLES")
-    add(0, "TABLE"); add(2, "LTYPE"); add(70, 1)
-    add(0, "LTYPE"); add(2, "CONTINUOUS"); add(70, 0); add(3, "Solid line"); add(72, 65); add(73, 0); add(40, 0.0)
-    add(0, "ENDTAB")
-    add(0, "TABLE"); add(2, "LAYER"); add(70, len(LAYERS))
-    for name, colour in LAYERS:
-        add(0, "LAYER"); add(2, name); add(70, 0); add(62, colour); add(6, "CONTINUOUS")
-    add(0, "ENDTAB")
-    add(0, "ENDSEC")
-    add(0, "SECTION"); add(2, "ENTITIES")
-
-    def polyline(points: np.ndarray, layer: str, closed: bool) -> None:
-        add(0, "POLYLINE"); add(8, layer); add(66, 1); add(70, 1 if closed else 0)
-        for x, y in points:
-            add(0, "VERTEX"); add(8, layer); add(10, f"{x:.4f}"); add(20, f"{y:.4f}"); add(30, "0.0")
-        add(0, "SEQEND"); add(8, layer)
+    dxf = DxfWriter(LAYERS)
+    polyline = dxf.polyline
 
     def text(x: float, y: float, height: float, value: str, layer: str) -> None:
-        add(0, "TEXT"); add(8, layer); add(10, f"{x:.4f}"); add(20, f"{y:.4f}"); add(30, "0.0")
-        add(40, height); add(1, _ascii(value))
+        dxf.label(x, y, "0.0", height, value, layer)
 
     for poly in cut.polylines:
         polyline(poly, "PLAN_CUT", True)
@@ -191,9 +162,7 @@ def dxf_text(cut: PlanCut, note: str = "") -> str:
     x0, y0, _, _ = cut.bounds
     text(x0, y0 - 1.0, 0.4, f"Plan cut {cut.z_lo:.2f} to {cut.z_hi:.2f} m, units metres, {cut.scans_used} scans"
          + (f", {note}" if note else ""), "INFO")
-    add(0, "ENDSEC")
-    add(0, "EOF")
-    return "\n".join(out) + "\n"
+    return dxf.text()
 
 
 def preview_png(cut: PlanCut, max_side: int = 2400) -> bytes:

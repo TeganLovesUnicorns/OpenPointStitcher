@@ -16,6 +16,11 @@ def pct(frac: float) -> str:
     return f"{v:.1f}%" if v < 10 else f"{v:.0f}%"
 
 
+def metres(v: float) -> str:
+    """Metres to the centimetre, never "-0.00"."""
+    return f"{v + 0.0:.2f}".replace("-0.00", "0.00")
+
+
 def cm(metres: float) -> str:
     v = metres * 100
     return f"{v:.1f} cm" if v < 10 else f"{v:.0f} cm"

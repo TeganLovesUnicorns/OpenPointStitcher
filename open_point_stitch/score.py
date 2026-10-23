@@ -3,7 +3,6 @@ by one against a fixed threshold. Also colour as a tolerant second opinion, and 
 alignment" from a rough start."""
 from __future__ import annotations
 
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -13,6 +12,7 @@ import numpy as np
 import open3d as o3d
 
 from .config import PipelineConfig
+from .lib.files import TrainedModel
 from .lib.geometry import fold_between
 from .lib.poses import tilt_of
 
@@ -525,7 +525,7 @@ FEATURES = ["surface_fit", "fitness", "rmse", "normal_agree", "n_matched", "tilt
             "n_landmarks_considered", "vote_score", "detector_score",
             "move_m", "move_deg", "is_proposer", "proposer_agree", "fit_gain"]
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed_judge.json")
-_MODEL: Optional[dict] = None
+_MODEL = TrainedModel(MODEL_PATH, FEATURES, "the seed judge")
 
 
 def clues(values: dict) -> np.ndarray:
@@ -552,11 +552,4 @@ def predict(model: dict, x: np.ndarray) -> np.ndarray:
 
 
 def load_model(path: str = MODEL_PATH) -> dict:
-    global _MODEL
-    if _MODEL is None:
-        with open(path) as fh:
-            model = json.load(fh)
-        if list(model["features"]) != FEATURES:
-            raise ValueError("seed judge was trained on a different list of clues than this code computes")
-        _MODEL = model
-    return _MODEL
+    return _MODEL.load(path)

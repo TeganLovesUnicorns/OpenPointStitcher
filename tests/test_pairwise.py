@@ -522,7 +522,7 @@ def test_learned_trust_is_per_patch_and_scales_the_judge():
     keys = np.floor(np.asarray(a.down.points) / pt.PATCH_M).astype(int)
     same = pid[:50, None] == pid[None, :50]
     assert np.array_equal(same, (keys[:50, None] == keys[None, :50]).all(-1) & (pid[:50, None] >= 0)), "one patch per cube"
-    pt._MODEL = {"features": list(pt.FEATURES), "coef": [np.log(0.02)] + [0.0] * len(pt.FEATURES), "floor_m": 0.01}
+    pt._MODEL.cached = {"features": list(pt.FEATURES), "coef": [np.log(0.02)] + [0.0] * len(pt.FEATURES), "floor_m": 0.01}
     pt._LEARNED.clear()
     try:
         w = pt.learned_weight(a, dataclasses.replace(cfg, learned_trust=True))
@@ -535,7 +535,7 @@ def test_learned_trust_is_per_patch_and_scales_the_judge():
         half = score.score_candidate_fast(a.down, b.down, nns, np.eye(4), cfg, src_w=ones[0], tgt_w=ones[1] * 0.5)
         assert abs(plain.surface_fit - same_w.surface_fit) < 1e-12 and abs(half.surface_fit - 0.5 * plain.surface_fit) < 1e-12
     finally:
-        pt._MODEL = None
+        pt._MODEL.cached = None
         pt._LEARNED.clear()
 
 
@@ -552,12 +552,12 @@ def test_the_seed_judge_ranks_candidates_and_decides_whether_to_move():
         for weight, expect_proposer in ((10.0, True), (-10.0, False)):
             w = np.zeros(len(sj.FEATURES))
             w[k] = weight
-            sj._MODEL = {"features": sj.FEATURES, "mean": [0.0] * len(w), "std": [1.0] * len(w), "w": w.tolist(), "b": 0.0}
+            sj._MODEL.cached = {"features": sj.FEATURES, "mean": [0.0] * len(w), "std": [1.0] * len(w), "w": w.tolist(), "b": 0.0}
             res = register_pair(a, b, cfg, init=np.eye(4), seeded_from="manual", local_only=True)
             moved = np.allclose(res.transform[:3, 3], [0.9, -0.6, 0.0], atol=0.02)
             assert moved == expect_proposer and (res.seeded_from == "proposer") == expect_proposer, (weight, res.seeded_from)
     finally:
-        sj._MODEL = None
+        sj._MODEL.cached = None
 
 
 def test_midair_trust_still_recovers_a_known_shift():

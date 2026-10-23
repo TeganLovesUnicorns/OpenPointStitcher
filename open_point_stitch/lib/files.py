@@ -8,6 +8,30 @@ import threading
 from typing import Callable, Optional
 
 
+class TrainedModel:
+    """A trained model's JSON file, read once and refused if it was trained on other features than this code computes.
+    Tests may set `cached` to a made-up model."""
+
+    def __init__(self, path: str, features, what: str) -> None:
+        self.path, self.features, self.what = path, list(features), what
+        self.cached: Optional[dict] = None
+
+    def load(self, path: Optional[str] = None) -> dict:
+        """The default file's model, kept after the first read; any other path is read fresh."""
+        if path is not None and path != self.path:
+            return self._read(path)
+        if self.cached is None:
+            self.cached = self._read(self.path)
+        return self.cached
+
+    def _read(self, path: str) -> dict:
+        with open(path) as fh:
+            model = json.load(fh)
+        if list(model["features"]) != self.features:
+            raise ValueError(f"{self.what} was trained on {model['features']}, this code computes {self.features}")
+        return model
+
+
 def _write_atomic(path: str, mode: str, write: Callable, **open_kwargs) -> None:
     """Whole file or nothing: write(fh) fills a temporary file beside path, which is flushed to disk and swapped in.
     The temporary name ends in .tmp (a stopped job's clean-up removes those) and is unique per process and thread."""

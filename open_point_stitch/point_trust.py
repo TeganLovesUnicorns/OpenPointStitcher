@@ -4,7 +4,6 @@ point of Prepared.down, cached per scan. Also each scan's sensor noise from its 
 weight the noise_trust option gives it."""
 from __future__ import annotations
 
-import json
 import os
 from typing import Optional
 
@@ -13,6 +12,7 @@ import open3d as o3d
 from scipy.spatial import cKDTree
 
 from .config import PipelineConfig
+from .lib.files import TrainedModel
 from .prepare import Prepared
 
 _THICKNESS: dict = {}       # (scan name, point count) -> per-point surface thickness of its prepared cloud
@@ -67,7 +67,7 @@ FEATURES = POINT_FEATURES + ("log_points", "log_patch_thickness", "flatness")   
 PATCH_M = 0.5               # trust is learned per patch
 PATCH_MIN = 3               # patches with fewer prepared points than this get MIDAIR_MIN_W
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trust_model.json")
-_MODEL: Optional[dict] = None
+_MODEL = TrainedModel(MODEL_PATH, FEATURES, "the trust model")
 _LEARNED: dict = {}
 
 
@@ -110,16 +110,7 @@ def patch_table(feats: np.ndarray, raw: np.ndarray) -> tuple[np.ndarray, np.ndar
 
 
 def load_model(path: str = MODEL_PATH) -> dict:
-    global _MODEL
-    if _MODEL is None or path != MODEL_PATH:
-        with open(path) as fh:
-            model = json.load(fh)
-        if tuple(model["features"]) != FEATURES:
-            raise ValueError(f"trust model was trained on {model['features']}, this code computes {FEATURES}")
-        if path != MODEL_PATH:
-            return model
-        _MODEL = model
-    return _MODEL
+    return _MODEL.load(path)
 
 
 def predicted_misfit(feats: np.ndarray, model: dict) -> np.ndarray:

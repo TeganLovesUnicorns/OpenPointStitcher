@@ -16,6 +16,7 @@ import numpy as np
 import open3d as o3d
 
 from .align_anchors import flat_height_gap
+from .explain import metres
 from .exclusions import levelled_scan  # noqa: F401 - callers use find_floors_ceilings.levelled_scan
 from .lib import geometry
 from .lib.clouds import as_cloud, payload_subset
@@ -295,11 +296,6 @@ def _merge_touching(pieces: list[Piece], flat_pts, flat_cell_key, width, origin)
     return pieces
 
 
-def _m(v: float) -> str:
-    """Metres to the centimetre, never "-0.00"."""
-    return f"{v + 0.0:.2f}".replace("-0.00", "0.00")
-
-
 def _label(pieces: list[Piece]) -> None:
     """Plain words for each piece, relative to the biggest flat floor and ceiling. Small raised floor-like pieces
     become "surface" first."""
@@ -309,22 +305,22 @@ def _label(pieces: list[Piece]) -> None:
         if (p.kind == "floor" and main_floor is not None and p is not main_floor and p.area_m2 < SURFACE_MAX_M2
                 and p.height_m - main_floor.height_m > SURFACE_MIN_RISE_M):
             p.kind = "surface"
-            p.label = f"flat surface {_m(p.height_m)} m (a counter, table, step or landing)"
+            p.label = f"flat surface {metres(p.height_m)} m (a counter, table, step or landing)"
     for kind in ("floor", "ceiling"):
         flat = [p for p in pieces if p.kind == kind and not p.sloped]
         main = max(flat, key=lambda p: p.area_m2) if flat else None
         for p in (q for q in pieces if q.kind == kind):
             if p.sloped:
-                p.label = f"sloped {kind}, {p.slope_deg:.0f} deg, {_m(p.z_min)} to {_m(p.z_max)} m"
+                p.label = f"sloped {kind}, {p.slope_deg:.0f} deg, {metres(p.z_min)} to {metres(p.z_max)} m"
             elif p is main or main is None or abs(p.height_m - main.height_m) < 0.05:
-                p.label = f"{kind} {_m(p.height_m)} m"
+                p.label = f"{kind} {metres(p.height_m)} m"
             else:
                 d = (p.height_m - main.height_m) * 100
                 if kind == "ceiling":
                     word = "lowered ceiling" if d < 0 else "raised ceiling"
                 else:
                     word = "raised floor" if d > 0 else "lower floor"
-                p.label = f"{word} {_m(p.height_m)} m ({abs(d):.0f} cm {'below' if d < 0 else 'above'} the main {kind})"
+                p.label = f"{word} {metres(p.height_m)} m ({abs(d):.0f} cm {'below' if d < 0 else 'above'} the main {kind})"
             if p.sparse:
                 p.label += ", from few points: the scan barely saw its underside"
 
