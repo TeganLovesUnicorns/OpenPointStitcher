@@ -23,7 +23,7 @@ from .lib.clouds import as_cloud
 from .lib.poses import small_motion, tilt_of, yaw_of, yaw_transform
 from .find_walls import wall_candidates
 from .find_landmarks import landmark_candidates
-from .prepare import Prepared, aabb, density_preserving_thin, thin_rng
+from .prepare import Prepared, aabb, density_preserving_thin, surface_sample, thin_rng
 from . import score as _verify
 from .overlap import direct_overlap
 from . import explain as _why
@@ -450,16 +450,8 @@ def _information_matrix(src: Prepared, tgt: Prepared, transform: np.ndarray,
 def achievable_overlap_frac(src_scan, tgt_scan, transform: np.ndarray,
                              radius_m: float, cfg: PipelineConfig) -> float:
     """Ceiling on fitness for this pair at transform: the fraction of one scan's surface within radius_m of the
-    other, full resolution. Thinned the same way as pair_filter.surface_pairs so the two stay comparable."""
-    def _thin(scan):
-        pcd = as_cloud(scan.points)
-        keep_idx, _ = density_preserving_thin(
-            pcd, cfg.adjacency_surface_thin_points, thin_rng(scan.name),
-            bin_m=cfg.voxel_size, floor_n=cfg.search_thin_floor_n,
-        )
-        return scan.points[keep_idx.astype(np.int64)]
-
-    src_pts, tgt_pts = _thin(src_scan), _thin(tgt_scan)
+    other, full resolution, on the same surface_sample pair_filter.surface_pairs measures."""
+    src_pts, tgt_pts = surface_sample(src_scan, cfg), surface_sample(tgt_scan, cfg)
     key = f"within_{int(round(radius_m * 100))}cm_frac"
     fwd = direct_overlap(src_pts, transform, tgt_pts, thresholds=(radius_m,))
     bwd = direct_overlap(tgt_pts, np.linalg.inv(transform), src_pts, thresholds=(radius_m,))

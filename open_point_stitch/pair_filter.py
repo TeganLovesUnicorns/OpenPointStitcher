@@ -11,7 +11,7 @@ import numpy as np
 from .config import PipelineConfig
 from .lib.clouds import as_cloud
 from .overlap import direct_overlap
-from .prepare import Prepared, aabb, density_preserving_thin, thin_rng
+from .prepare import Prepared, aabb, surface_sample
 from .pts_file import Scan
 from .find_surfaces import ScanFeatures, extract_scan_features, feature_pair_score
 
@@ -101,12 +101,7 @@ def surface_pairs(
     for i, scan in enumerate(scans):
         if placements.get(scan.name) is None:
             continue
-        pcd = as_cloud(scan.points)
-        keep_idx, _ = density_preserving_thin(
-            pcd, cfg.adjacency_surface_thin_points, thin_rng(scan.name),
-            bin_m=cfg.voxel_size, floor_n=cfg.search_thin_floor_n,
-        )
-        local_pts = scan.points[keep_idx.astype(np.int64)]
+        local_pts = surface_sample(scan, cfg)
         M = placements[scan.name].matrix()
         thinned_world[i] = (M[:3, :3] @ local_pts.T).T + M[:3, 3]
 

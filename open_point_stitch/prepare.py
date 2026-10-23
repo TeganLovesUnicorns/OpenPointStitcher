@@ -47,6 +47,15 @@ def thin_rng(name: str) -> np.random.Generator:
     return np.random.default_rng(int.from_bytes(digest[:8], "little"))
 
 
+def surface_sample(scan, cfg) -> np.ndarray:
+    """The scan's own points (raw frame) thinned the one way every shared-surface measure between two scans uses,
+    so their fractions stay comparable."""
+    keep_idx, _ = density_preserving_thin(as_cloud(scan.points),
+                                          cfg.adjacency_surface_thin_points, thin_rng(scan.name),
+                                          bin_m=cfg.voxel_size, floor_n=cfg.search_thin_floor_n)
+    return scan.points[keep_idx.astype(np.int64)]
+
+
 def density_preserving_thin(pcd: o3d.geometry.PointCloud, target_max_points: int,
                              rng: np.random.Generator,
                              bin_m: float, floor_n: int,
