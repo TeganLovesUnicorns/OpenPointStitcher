@@ -3,6 +3,14 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.55.1 (2026-10-23)
+
+- Excluded regions and review removals are now left out of every alignment step (height settle, links, tilt
+  suggestion), not only pair matching.
+- The processor and the graphics card build each alignment step's rotation the same way, so with mid-air or learned
+  trust they give the same answer.
+- Shared code for writing DXF files, reading trained models and a few smaller helpers, instead of copies.
+
 ## 0.55.0 (2026-10-23)
 
 - Settling heights now pairs only flat points on surfaces that face the same way and sit within 30 cm, and measures
