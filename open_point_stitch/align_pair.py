@@ -20,7 +20,7 @@ import open3d as o3d
 from .config import PipelineConfig
 from .align_gravity import coarse_candidates
 from .lib.clouds import as_cloud
-from .lib.poses import tilt_of, yaw_of, yaw_transform
+from .lib.poses import small_motion, tilt_of, yaw_of, yaw_transform
 from .find_walls import wall_candidates
 from .find_landmarks import landmark_candidates
 from .prepare import Prepared, aabb, density_preserving_thin, thin_rng
@@ -403,10 +403,7 @@ def weighted_point_to_plane(src: Prepared, tgt: Prepared, init: np.ndarray, dist
             x = np.linalg.solve(A, b)
         except np.linalg.LinAlgError:
             break
-        step = np.eye(4)
-        step[:3, :3] = o3d.geometry.get_rotation_matrix_from_xyz(x[:3])
-        step[:3, 3] = x[3:]
-        current = step @ current
+        current = small_motion(x) @ current
     return current
 
 

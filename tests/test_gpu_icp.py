@@ -94,8 +94,8 @@ def test_a_batch_gives_each_start_the_answer_it_would_get_alone_and_repeats_exac
 
 
 def test_the_full_gpu_ladder_weights_pairings_the_way_the_cpu_ladder_does():
-    """With thickness trust the card's full-resolution ladder is Open3D's Tukey ICP to rounding; with mid-air trust too
-    it is within a hundredth of a millimetre of the CPU's own weighted step."""
+    """With thickness trust the card's full-resolution ladder is Open3D's Tukey ICP to rounding, and with mid-air trust
+    too it is the CPU's own weighted step to rounding: both build each step's rotation the same way."""
     if not _card():
         print("    SKIP: no usable GPU here")
         return
@@ -105,7 +105,7 @@ def test_the_full_gpu_ladder_weights_pairings_the_way_the_cpu_ladder_does():
     a, b, cfg = _pair()
     off = np.eye(4)
     off[:2, 3] = (0.12, -0.05)
-    for kw, tol_cm in (({"thickness_trust": True}, 1e-6), ({"thickness_trust": True, "midair_trust": True}, 0.01)):
+    for kw, tol_cm in (({"thickness_trust": True}, 1e-6), ({"thickness_trust": True, "midair_trust": True}, 1e-6)):
         c = dataclasses.replace(cfg, **kw)
         cpu = np.asarray(fine_register_ladder(a, b, off, c).transformation)
         gpu = ladder_batch(a, b, [off], c, coarse_from=float("inf"))[0][0]

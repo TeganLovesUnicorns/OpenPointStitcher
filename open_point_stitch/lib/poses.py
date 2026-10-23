@@ -44,6 +44,19 @@ def tilt_matrix3(pitch_deg: float, roll_deg: float, yaw_deg: float) -> np.ndarra
     return pitch_matrix3(pitch_deg) @ roll_matrix3(roll_deg) @ yaw_matrix3(yaw_deg)
 
 
+def small_motion(x: np.ndarray) -> np.ndarray:
+    """The 4x4 for one ICP step's small motion (rx, ry, rz, tx, ty, tz), composed as Open3D's ICP composes it (Rz Ry Rx).
+    Every ICP solver here builds its step with this, so the CPU and the card agree."""
+    cx, sx, cy, sy, cz, sz = np.cos(x[0]), np.sin(x[0]), np.cos(x[1]), np.sin(x[1]), np.cos(x[2]), np.sin(x[2])
+    rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+    ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+    m = np.eye(4)
+    m[:3, :3] = rz @ ry @ rx
+    m[:3, 3] = x[3:]
+    return m
+
+
 def yaw_transform(yaw_deg: float, t: np.ndarray) -> np.ndarray:
     """4x4 turning about the vertical by yaw_deg, then shifting by t."""
     th = np.radians(yaw_deg)

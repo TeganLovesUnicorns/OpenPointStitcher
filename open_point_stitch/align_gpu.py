@@ -19,7 +19,7 @@ from .align_pair import PairResult, _information_matrix, _reject_reason_from_gat
 from .config import PipelineConfig
 from .find_walls import wall_candidates
 from .point_trust import ladder_tukey_base, point_weight
-from .lib.poses import solve_yaw_translation, yaw_transform
+from .lib.poses import small_motion, solve_yaw_translation, yaw_transform
 from .prepare import Prepared
 from .score import Verdict, build_target_index, score_candidate_fast
 
@@ -205,18 +205,6 @@ def coarse_for(prepared, voxel: float, device: o3d.core.Device | None = None) ->
     return cloud
 
 
-def _motion(x: np.ndarray) -> np.ndarray:
-    """The 4x4 for a small motion (rx, ry, rz, tx, ty, tz), composed the way the CPU ICP composes it (Rz Ry Rx)."""
-    cx, sx, cy, sy, cz, sz = np.cos(x[0]), np.sin(x[0]), np.cos(x[1]), np.sin(x[1]), np.cos(x[2]), np.sin(x[2])
-    rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
-    ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
-    rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
-    m = np.eye(4)
-    m[:3, :3] = rz @ ry @ rx
-    m[:3, 3] = x[3:]
-    return m
-
-
 def _evaluate(src: GpuCloud, tgt: GpuCloud, index, T: np.ndarray, radius: float):
     """Where the source lands under T: its matches within the window, and the normal equations for the next step.
     Returns (A 6x6, b 6, match count, sum of squared match distances)."""
@@ -310,7 +298,7 @@ def icp_point_to_plane_batch(src: GpuCloud, tgt: GpuCloud, inits: list, max_dist
         active &= count >= 6
         for i in np.flatnonzero(active):
             try:
-                trans[i] = _motion(np.linalg.solve(a[i], -b[i])) @ trans[i]
+                trans[i] = small_motion(np.linalg.solve(a[i], -b[i])) @ trans[i]
             except np.linalg.LinAlgError:
                 active[i] = False
         live = np.flatnonzero(active)
@@ -375,7 +363,7 @@ def icp_point_to_plane(src: GpuCloud, tgt: GpuCloud, init: np.ndarray, max_dist:
             x = np.linalg.solve(a, -b)
         except np.linalg.LinAlgError:
             break
-        T = _motion(x) @ T
+        T = small_motion(x) @ T
         prev_fitness, prev_rmse = fitness, rmse
         a, b, count, sum_d2 = _evaluate(src, tgt, index, T, max_dist)
         fitness = count / src.n
