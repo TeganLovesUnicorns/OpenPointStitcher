@@ -210,6 +210,218 @@ def import_upload(pdir: str, filename: str, stream, length: int, keep_both: bool
     return {"name": os.path.splitext(filename)[0], "file": filename, "points": points, "bytes": length}
 
 
+# -------------------------------------------------------------------------------------------------------------------
+# Removing a scan from a project. The .pts moves out of scans-raw/ into removed-scans/, never deleted, with a note
+# beside it (<file>.json) holding everything placement.json said about that scan, so putting it back restores its
+# pose, links, exclusions and the rest. server.py does the placement write (locked, saved version first).
+# -------------------------------------------------------------------------------------------------------------------
+
+REMOVED_SCANS_DIRNAME = "removed-scans"
+# Top-level lists in placement.json whose entries each belong to one scan through their "scan" field.
+_PER_SCAN_LISTS = ("exclusions", "stairs", "landmarks", "labels")
+
+
+def removed_scans_dir(pdir: str) -> str:
+    return os.path.join(pdir, REMOVED_SCANS_DIRNAME)
+
+
+def find_scan_file(pdir: str, name: str) -> Optional[str]:
+    """The file in scans-raw/ for the scan called `name` (its file name without .pts), or None. Matched against the
+    folder listing, so a name from a URL can never reach outside it."""
+    raw = scans_raw_dir(pdir)
+    if not os.path.isdir(raw):
+        return None
+    for f in sorted(os.listdir(raw)):
+        stem, ext = os.path.splitext(f)
+        if stem == name and ext.lower() == ".pts" and os.path.isfile(os.path.join(raw, f)):
+            return os.path.join(raw, f)
+    return None
+
+
+def scan_names(pdir: str) -> set[str]:
+    """Every scan now in scans-raw/."""
+    raw = scans_raw_dir(pdir)
+    if not os.path.isdir(raw):
+        return set()
+    return {os.path.splitext(f)[0] for f in os.listdir(raw) if f.lower().endswith(".pts")}
+
+
+def take_scan_out(data: dict, name: str) -> dict:
+    """Remove everything placement `data` says about scan `name`, in place, and return what was removed (the input
+    to put_scan_back). A link left with fewer than two scans is dropped whole; keys absent from `data` stay absent."""
+    removed: dict = {}
+
+    def _split(key: str, belongs) -> None:
+        if not isinstance(data.get(key), list):
+            return
+        out = [e for e in data[key] if belongs(e)]
+        if out:
+            removed[key] = out
+            data[key] = [e for e in data[key] if not belongs(e)]
+
+    _split("scans", lambda s: s.get("name") == name)
+    for key in _PER_SCAN_LISTS:
+        _split(key, lambda e: e.get("scan") == name)
+    _split("measurements", lambda m: name in ((m.get("a") or {}).get("scan"), (m.get("b") or {}).get("scan")))
+    _split("excluded_pairs", lambda p: name in p)
+    _split("pins", lambda p: name in (p.get("a"), p.get("b")))           # pre-link point pins, still read on load
+    # A run's pair table: only a record of the last run, so it is dropped and not put back.
+    _split("last_align_pairs", lambda r: name in (r.get("source_name"), r.get("target_name")))
+    removed.pop("last_align_pairs", None)
+    if isinstance(data.get("anchors"), list):
+        kept, touched = [], []
+        for a in data["anchors"]:
+            members = a.get("members") or []
+            if not any(m.get("scan") == name for m in members):
+                kept.append(a)
+                continue
+            touched.append(a)
+            rest = [m for m in members if m.get("scan") != name]
+            if len(rest) >= 2:
+                kept.append({**a, "members": rest})
+        if touched:
+            removed["anchors"] = touched              # each link whole, as it was
+            data["anchors"] = kept
+    if isinstance(data.get("as_imported"), dict) and name in data["as_imported"]:
+        removed["as_imported"] = data["as_imported"].pop(name)
+    if data.get("reference_scan") == name:
+        removed["reference_scan"] = data.pop("reference_scan")
+    return removed
+
+
+def describe_removal(removed: dict) -> dict:
+    """Counts of what take_scan_out removed, for the confirm step and the reply."""
+    anchors = removed.get("anchors", [])
+    return {
+        "placed": bool(removed.get("scans")),
+        "links": len(anchors),
+        "links_dropped": sum(1 for a in anchors if len(a.get("members") or []) - 1 < 2),
+        **{key: len(removed.get(key, [])) for key in (*_PER_SCAN_LISTS, "measurements", "excluded_pairs")},
+        "reference": "reference_scan" in removed,
+    }
+
+
+def put_scan_back(data: dict, name: str, removed: dict, present: set[str]) -> None:
+    """Undo take_scan_out on `data`, in place. Nothing already there is replaced, and a link, measurement or excluded
+    pair comes back only when every other scan it names is still in `present` (the scans in scans-raw/)."""
+    present = set(present) | {name}
+
+    def _add(key: str, items: list, same) -> None:
+        if not items:
+            return
+        have = data.setdefault(key, [])
+        have.extend(e for e in items if not any(same(e, h) for h in have))
+
+    by_id = lambda e, h: e.get("id") is not None and e.get("id") == h.get("id")   # noqa: E731
+    _add("scans", removed.get("scans", []), lambda e, h: e.get("name") == h.get("name"))
+    for key in _PER_SCAN_LISTS:
+        _add(key, removed.get(key, []), by_id)
+    _add("measurements", [m for m in removed.get("measurements", [])
+                          if {(m.get("a") or {}).get("scan"), (m.get("b") or {}).get("scan")} <= present], by_id)
+    _add("excluded_pairs", [p for p in removed.get("excluded_pairs", []) if set(p) <= present],
+         lambda e, h: set(e) == set(h))
+    _add("pins", [p for p in removed.get("pins", []) if {p.get("a"), p.get("b")} <= present], lambda e, h: e == h)
+    for a in removed.get("anchors", []):
+        members = [m for m in a.get("members") or [] if m.get("scan") in present]
+        mine = [m for m in members if m.get("scan") == name]
+        anchors = data.setdefault("anchors", [])
+        same = next((h for h in anchors if h.get("id") == a.get("id")), None)
+        if same is not None:
+            if not any(m.get("scan") == name for m in same.get("members") or []):
+                same["members"] = list(same.get("members") or []) + mine
+        elif len(members) >= 2:
+            anchors.append({**a, "members": members})
+    if "as_imported" in removed:
+        data.setdefault("as_imported", {}).setdefault(name, removed["as_imported"])
+    if "reference_scan" in removed and not data.get("reference_scan"):
+        data["reference_scan"] = removed["reference_scan"]
+
+
+def _free_name_in(folder: str, filename: str) -> str:
+    stem, ext = os.path.splitext(filename)
+    cand, k = filename, 2
+    while os.path.exists(os.path.join(folder, cand)) or os.path.exists(os.path.join(folder, cand + ".json")):
+        cand, k = f"{stem} ({k}){ext}", k + 1
+    return cand
+
+
+def move_scan_out(pdir: str, name: str) -> tuple[str, str]:
+    """Move scan `name`'s file from scans-raw/ into removed-scans/ (a free name there if one is taken). Returns
+    (from, to); KeyError if the project has no such scan."""
+    src = find_scan_file(pdir, name)
+    if src is None:
+        raise KeyError(name)
+    folder = removed_scans_dir(pdir)
+    os.makedirs(folder, exist_ok=True)
+    dest = os.path.join(folder, _free_name_in(folder, os.path.basename(src)))
+    os.replace(src, dest)
+    return src, dest
+
+
+def write_removal_note(removed_path: str, name: str, original_file: str, removed: dict,
+                       saved_version: Optional[str]) -> None:
+    write_json_atomic(removed_path + ".json", {
+        "name": name, "file": original_file,
+        "removed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "saved_version": saved_version, "removed": removed,
+    }, indent=1)
+
+
+def _removed_file_path(pdir: str, removed_file: str) -> Optional[str]:
+    """The path of a removed scan from its name in removed-scans/ (from a URL), or None; matched against the
+    listing, so it never reaches outside the folder."""
+    folder = removed_scans_dir(pdir)
+    if not os.path.isdir(folder) or removed_file not in os.listdir(folder) or not removed_file.lower().endswith(".pts"):
+        return None
+    return os.path.join(folder, removed_file)
+
+
+def read_removal_note(removed_path: str) -> dict:
+    try:
+        with open(removed_path + ".json", encoding="utf-8") as fh:
+            note = json.load(fh)
+        return note if isinstance(note, dict) else {}
+    except (OSError, ValueError):
+        return {}                                  # no note: the file comes back with nothing else
+
+
+def list_removed_scans(pdir: str) -> list[dict]:
+    """Every scan in removed-scans/, newest removal first."""
+    folder = removed_scans_dir(pdir)
+    if not os.path.isdir(folder):
+        return []
+    out = []
+    for f in os.listdir(folder):
+        path = os.path.join(folder, f)
+        if not f.lower().endswith(".pts") or not os.path.isfile(path):
+            continue
+        note = read_removal_note(path)
+        original = note.get("file") or f
+        out.append({"file": f, "name": os.path.splitext(original)[0], "restores_as": original,
+                    "removed_at": note.get("removed_at"), "bytes": os.path.getsize(path),
+                    "taken": os.path.exists(os.path.join(scans_raw_dir(pdir), original)),
+                    "summary": describe_removal(note.get("removed") or {})})
+    out.sort(key=lambda r: (r["removed_at"] or "", r["file"]), reverse=True)
+    return out
+
+
+def move_scan_back(pdir: str, removed_file: str) -> tuple[str, dict, str]:
+    """Move a removed scan back into scans-raw/ under its original file name. Returns (its name, its removal note's
+    removed entries, the note's path); KeyError if there is no such removed scan, DuplicateScan if that name is in
+    use again. The caller deletes the note once what it held is back in placement.json."""
+    path = _removed_file_path(pdir, removed_file)
+    if path is None:
+        raise KeyError(removed_file)
+    note = read_removal_note(path)
+    original = os.path.basename(note.get("file") or removed_file)
+    dest = os.path.join(scans_raw_dir(pdir), original)
+    if os.path.exists(dest):
+        raise DuplicateScan(original, free_scan_name(pdir, original))
+    os.makedirs(scans_raw_dir(pdir), exist_ok=True)
+    os.replace(path, dest)
+    return os.path.splitext(original)[0], note.get("removed") or {}, path + ".json"
+
+
 def backups_dir(pdir: str) -> str:
     return os.path.join(pdir, BACKUPS_DIRNAME)
 
@@ -391,9 +603,9 @@ def _names_in_tree(root: str) -> set[str]:
 
 
 def referenced_ids(pdir: str, golden_dir: Optional[str] = None) -> set[str]:
-    """Every saved version a report, job, export or the golden folder names."""
+    """Every saved version a report, job, export, removed scan's note or the golden folder names."""
     found: set[str] = set()
-    for sub in (reports_dir(pdir), exports_dir(pdir), os.path.join(pdir, "jobs")):
+    for sub in (reports_dir(pdir), exports_dir(pdir), os.path.join(pdir, "jobs"), removed_scans_dir(pdir)):
         found |= _names_in_tree(sub)
     return found | _names_in_tree(golden_dir if golden_dir is not None else default_golden_dir())
 

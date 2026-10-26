@@ -3,6 +3,12 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.56.0 (2026-10-26)
+
+- A scan can be taken out of an open project: right-click it and choose "Remove from project". Its file moves to
+  the project's removed-scans folder (never deleted), and its position, links and exclusions come out in a saved
+  version. File > Import scans lists removed scans and puts one back with all of that.
+
 ## 0.55.1 (2026-10-23)
 
 - Excluded regions and review removals are now left out of every alignment step (height settle, links, tilt
