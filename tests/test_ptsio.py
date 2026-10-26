@@ -51,6 +51,16 @@ def test_no_header_line():
     assert scan.has_color
 
 
+def test_leading_geodata_comment_is_skipped():
+    p = _tmp("geo.pts")
+    with open(p, "w") as fh:
+        fh.write(';{"GeoData":{"Lat":45.0265,"Lon":-93.1478}}\n2\n0 0 0 -1 10 20 30\n1 2 3 -1 40 50 60\n')
+    scan = read_pts(p)
+    assert scan.n_points == 2
+    assert scan.header_count == 2
+    assert scan.has_color
+
+
 def test_wrong_header_count_is_tolerated():
     p = _tmp("badhdr.pts")
     with open(p, "w") as fh:

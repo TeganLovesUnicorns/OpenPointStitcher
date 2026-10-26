@@ -5429,6 +5429,7 @@ function gateShowError(msg){
   if(msg){el.textContent=msg; el.style.display='block';} else {el.style.display='none';}
 }
 function _fmtWhen(iso){ return iso ? iso.replace('T',' ').replace('Z',' UTC') : null; }
+function _scanCountText(p){ return p.n_scans_raw ? `${p.n_scans_raw} scan(s)` : 'no scans yet - click to add some'; }
 // Cached from the last /api/projects fetch, so the Open existing and Import overlays open instantly.
 let startData=null;
 
@@ -5457,7 +5458,7 @@ function renderStartScreen(data){
     <div class="projectRow" data-open="${escHtml(p.name)}">
       <div>
         <div class="pname">${escHtml(p.name)}</div>
-        <div class="pmeta">${p.n_scans_raw} scan(s)`
+        <div class="pmeta">${_scanCountText(p)}`
           +`${p.last_opened?', last opened '+escHtml(_fmtWhen(p.last_opened)):
               p.last_modified?', last saved '+escHtml(_fmtWhen(p.last_modified)):', never opened'}`
           +`${p.error?' - <span style="color:var(--bad)">'+escHtml(p.error)+'</span>':''}</div>
@@ -5521,7 +5522,12 @@ async function _gateOpenProjectNow(name){
   let r;
   try{ r=await fetch('/api/projects/'+encodeURIComponent(name)+'/open',{method:'POST'}); }
   catch(e){ gateShowError('could not reach the server'); return false; }
-  if(!r.ok){ const j=await r.json().catch(()=>({})); gateShowError(j.error||'could not open that project'); return false; }
+  if(!r.ok){
+    const j=await r.json().catch(()=>({}));
+    // No scans yet: offer the import pane, which opens the project once something is in.
+    if(j.no_scans){ $('openExistingModal').style.display='none'; gateOpenImportPane(name); return false; }
+    gateShowError(j.error||'could not open that project'); return false;
+  }
   location.href=location.pathname+'?project='+encodeURIComponent(name);
   return true;
 }
@@ -5733,7 +5739,7 @@ function _renderOpenExistingList(data){
         alt="" loading="lazy" onerror="this.remove()"></div>
       <div class="pinfo">
         <div class="pname">${escHtml(p.name)}</div>
-        <div class="pmeta">${p.n_scans_raw} scan(s)`
+        <div class="pmeta">${_scanCountText(p)}`
           +`${p.last_opened?', last opened '+escHtml(_fmtWhen(p.last_opened)):
               p.last_modified?', last saved '+escHtml(_fmtWhen(p.last_modified)):', never opened'}`
           +`${p.error?' - <span style="color:var(--bad)">'+escHtml(p.error)+'</span>':''}</div>

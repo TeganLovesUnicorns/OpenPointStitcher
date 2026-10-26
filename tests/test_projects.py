@@ -128,6 +128,34 @@ def test_list_import_source_reports_point_counts():
         assert listed == [{"name": "A", "points": 7}]
 
 
+def test_list_import_source_counts_past_a_leading_geodata_line():
+    with tempfile.TemporaryDirectory() as root:
+        with open(os.path.join(root, "G.pts"), "w") as fh:
+            fh.write(';{"GeoData":{"Lat":45.0,"Lon":-93.1}}\n2\n0 0 0\n1 1 1\n')
+        assert pj.list_import_source(root) == [{"name": "G", "points": 2}]
+
+
+def test_a_project_with_no_scans_says_so_and_stays_closed():
+    """The page offers its import pane on this answer, so it must be told apart from a missing project."""
+    from open_point_stitch.server import ProjectHasNoScans, Session
+    with tempfile.TemporaryDirectory() as root:
+        pj.create_project(root, "empty")
+        s = Session(root, root, root)
+        try:
+            s.open_project("empty")
+        except ProjectHasNoScans:
+            pass
+        else:
+            raise AssertionError("an empty project opened")
+        assert s.app is None and s.active_project is None
+        try:
+            s.open_project("missing")
+        except ProjectHasNoScans:
+            raise AssertionError("a missing project was reported as an empty one")
+        except FileNotFoundError:
+            pass
+
+
 def test_migrate_project_layout_moves_flat_backups_reports_and_exports():
     """An old-layout project's loose files move into their subfolders; nothing is deleted, and files of no known shape
     are left alone."""

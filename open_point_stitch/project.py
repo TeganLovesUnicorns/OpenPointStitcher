@@ -251,21 +251,10 @@ def migrate_project_layout(pdir: str) -> dict:
 
 def list_import_source(source_dir: str) -> list[dict]:
     """What is available to import right now, for the picker's checklist -
-    name and a fast, untrusted point count (same header-only read
-    server.py's own `_quick_point_count` uses for the same purpose)."""
-    out = []
-    for p in sorted(glob.glob(os.path.join(source_dir, "*.pts"))):
-        name = os.path.splitext(os.path.basename(p))[0]
-        points = 0
-        try:
-            with open(p, "r", errors="replace") as fh:
-                first = fh.readline().split()
-            if len(first) == 1:
-                points = int(first[0])
-        except (OSError, ValueError):
-            pass
-        out.append({"name": name, "points": points})
-    return out
+    name and a fast, untrusted point count (pts_file.quick_point_count, the header-only read the server uses too)."""
+    from .pts_file import quick_point_count
+    return [{"name": os.path.splitext(os.path.basename(p))[0], "points": quick_point_count(p)}
+            for p in sorted(glob.glob(os.path.join(source_dir, "*.pts")))]
 
 
 # -------------------------------------------------------------------------------------------------------------------

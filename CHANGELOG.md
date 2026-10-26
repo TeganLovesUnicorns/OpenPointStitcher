@@ -3,6 +3,12 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.55.2 (2026-10-26)
+
+- Scans that start with a ";" or "#" comment line, such as the GeoData location line newer iPhone scanner exports
+  write before the point count, now import and show their point count instead of failing to read.
+- Clicking a project that has no scans yet opens its import window, instead of an error with no way to add any.
+
 ## 0.55.1 (2026-10-23)
 
 - Excluded regions and review removals are now left out of every alignment step (height settle, links, tilt

@@ -1,6 +1,7 @@
 """Reader and writer for .pts point clouds.
 
-Line 1 is a point count (a hint only), then "X Y Z I R G B" lines. Tolerates 3, 4, 6 and 7 columns."""
+Line 1 is a point count (a hint only), then "X Y Z I R G B" lines. Tolerates 3, 4, 6 and 7 columns,
+and leading ";" or "#" comment lines."""
 
 from __future__ import annotations
 
@@ -18,6 +19,9 @@ log = logging.getLogger(__name__)
 
 # Intensity values written when the field is unpopulated.
 _UNSET_INTENSITY = -1.0
+
+# Lines starting with these are skipped wherever they appear.
+_COMMENT_PREFIXES = (";", "#")
 
 
 @dataclass
@@ -67,19 +71,38 @@ def _looks_like_count_header(first_line: str) -> Optional[int]:
     return value if value >= 0 else None
 
 
+def _first_content_line(fh) -> tuple[int, str]:
+    """(offset, text) of the first line that is not a comment; text is "" at end of file."""
+    while True:
+        start = fh.tell()
+        line = fh.readline()
+        if not line.lstrip().startswith(_COMMENT_PREFIXES):
+            return start, line
+
+
+def quick_point_count(path: str) -> int:
+    """The header's point count, untrusted and without reading the points; 0 if there is none or it cannot be read."""
+    try:
+        with open(path, "r", errors="replace") as fh:
+            return _looks_like_count_header(_first_content_line(fh)[1]) or 0
+    except OSError:
+        return 0
+
+
 def read_pts(path: str, name: Optional[str] = None) -> Scan:
     """Load a single .pts file into a Scan.
 
     Raises ValueError if the file has no parseable point rows.
     """
     with open(path, "r", errors="replace") as fh:
-        first_line = fh.readline()
+        # Some exporters open with comment lines, e.g. ';{"GeoData":{...}}' ahead of the count.
+        start, first_line = _first_content_line(fh)
         header_count = _looks_like_count_header(first_line)
-        # If line 1 was not a count it is a real data row, so rewind.
+        # If that line was not a count it is a real data row, so rewind to it.
         if header_count is None:
-            fh.seek(0)
+            fh.seek(start)
         try:
-            data = np.loadtxt(fh, dtype=np.float64, ndmin=2)
+            data = np.loadtxt(fh, dtype=np.float64, ndmin=2, comments=_COMMENT_PREFIXES)
         except ValueError as exc:
             raise ValueError(f"{path}: could not parse point rows ({exc})") from exc
 

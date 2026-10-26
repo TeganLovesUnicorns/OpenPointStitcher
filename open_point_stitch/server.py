@@ -60,7 +60,7 @@ from open_point_stitch import find_corners, find_openings, find_landmarks
 from open_point_stitch.pipeline import run_pairwise
 from open_point_stitch.align_graph import build_and_optimize
 from open_point_stitch.prepare import preprocess_all_offloaded
-from open_point_stitch.pts_file import load_folder
+from open_point_stitch.pts_file import load_folder, quick_point_count
 from open_point_stitch import align_gravity, limits
 from open_point_stitch import project as project_mod
 from open_point_stitch import find_floors_ceilings
@@ -1705,19 +1705,6 @@ def _scans_fingerprint(scans_dir: str, pattern: str) -> tuple:
     return tuple(out)
 
 
-def _quick_point_count(path: str) -> int:
-    """Untrusted header point count for the first paint of a still-building row only;
-    replaced when the real preview arrives."""
-    try:
-        with open(path, "r", errors="replace") as fh:
-            first = fh.readline().split()
-        if len(first) == 1:
-            return int(first[0])
-    except (OSError, ValueError):
-        pass
-    return 0
-
-
 THUMBNAIL_FILENAME = "thumbnail.png"
 
 
@@ -1869,7 +1856,8 @@ class App:
         self.scan_meta = []  # stable order for the initial list
         for p in paths:
             name = os.path.splitext(os.path.basename(p))[0]
-            self.scan_meta.append({"name": name, "points": _quick_point_count(p)})
+            # Untrusted header count for the first paint only; replaced when the real preview arrives.
+            self.scan_meta.append({"name": name, "points": quick_point_count(p)})
             self.build_events[name] = threading.Event()
             self._first_pass_done[name] = threading.Event()
 
@@ -2043,6 +2031,10 @@ class App:
         self._preview_pool.shutdown(wait=False, cancel_futures=True)
 
 
+class ProjectHasNoScans(FileNotFoundError):
+    """The project exists but scans-raw/ holds no .pts yet, so the page offers to import some instead of opening it."""
+
+
 class Session:
     """Holds whichever project is open (self.app) plus the project routes' roots: projects_root, import_source
     (/scans) and legacy_out_dir."""
@@ -2096,9 +2088,7 @@ class Session:
             try:
                 new_app = App(raw_dir, pdir, self.pattern)
             except FileNotFoundError:
-                raise FileNotFoundError(
-                    f"project {name!r} has no imported scans yet - import some "
-                    f"before opening it") from None
+                raise ProjectHasNoScans(f"project {name!r} has no scans yet - add some to open it") from None
             old_app = self.app
             self.app = new_app
             self.active_project = name
@@ -2397,6 +2387,9 @@ def make_handler(session: Session):
                     name = urllib.parse.unquote(path[len("/api/projects/"):-len("/open")])
                     try:
                         session.open_project(name)
+                    except ProjectHasNoScans as exc:
+                        self._json(409, {"error": str(exc), "no_scans": True})
+                        return
                     except FileNotFoundError as exc:
                         self._json(404, {"error": str(exc)})
                         return
