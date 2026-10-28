@@ -156,6 +156,29 @@ def test_a_project_with_no_scans_says_so_and_stays_closed():
             pass
 
 
+def test_a_missing_file_while_loading_a_project_with_scans_is_not_called_empty():
+    from open_point_stitch import server
+    with tempfile.TemporaryDirectory() as root:
+        pdir = pj.create_project(root, "has_scans")
+        _make_pts(os.path.join(pj.scans_raw_dir(pdir), "A.pts"))
+        s = server.Session(root, root, root)
+        real_app = server.App
+
+        def broken_app(*args, **kwargs):
+            raise FileNotFoundError("some cache file")
+        server.App = broken_app
+        try:
+            s.open_project("has_scans")
+        except server.ProjectHasNoScans:
+            raise AssertionError("a project with scans was reported as having none")
+        except FileNotFoundError as exc:
+            assert "some cache file" in str(exc), exc
+        else:
+            raise AssertionError("the load error was swallowed")
+        finally:
+            server.App = real_app
+
+
 def test_migrate_project_layout_moves_flat_backups_reports_and_exports():
     """An old-layout project's loose files move into their subfolders; nothing is deleted, and files of no known shape
     are left alone."""

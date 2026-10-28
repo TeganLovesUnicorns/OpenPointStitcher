@@ -19,7 +19,6 @@ import open3d as o3d
 
 from .config import PipelineConfig
 from .align_gravity import coarse_candidates
-from .lib.clouds import as_cloud
 from .lib.poses import small_motion, tilt_of, yaw_of, yaw_transform
 from .find_walls import wall_candidates
 from .find_landmarks import landmark_candidates

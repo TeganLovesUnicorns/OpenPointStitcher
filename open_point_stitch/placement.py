@@ -49,6 +49,12 @@ class Placement:
             locked=bool(s.get("locked", False)),
         )
 
+    @property
+    def pose(self) -> ScanPose:
+        """Where the bench draws this scan; pose.place() moves levelled, floor-relative points into the venue."""
+        return ScanPose(yaw_deg=self.yaw_deg, x_m=self.tx, y_m=self.ty, z_m=self.tz,
+                        pitch_deg=self.pitch_deg, roll_deg=self.roll_deg)
+
     def matrix(self) -> np.ndarray:
         """4x4 taking this scan's RAW points into the shared world frame."""
         m = np.eye(4)
@@ -113,6 +119,12 @@ class AnchorMember:
     extent: tuple[float, float, float]          # dx, dy, dz bounding size
     n_points: int                               # TRUE count, even if `points` is thinned for storage
 
+    @classmethod
+    def from_dict(cls, m: dict) -> "AnchorMember":
+        return cls(scan=m["scan"], points=[tuple(pt) for pt in m.get("points", [])],
+                   centroid=tuple(m["centroid"]), extent=tuple(m.get("extent", (0.0, 0.0, 0.0))),
+                   n_points=int(m.get("n_points", len(m.get("points", [])))))
+
 
 @dataclass
 class Anchor:
@@ -121,6 +133,12 @@ class Anchor:
     id: str
     members: list[AnchorMember] = field(default_factory=list)
     label: str = ""
+
+    @classmethod
+    def from_dict(cls, a: dict, index: int = 0) -> "Anchor":
+        """One `anchors` entry of a placement file, the same way for every reader; an entry with no id gets one."""
+        return cls(id=a.get("id", f"anchor-{index}"), label=a.get("label", ""),
+                   members=[AnchorMember.from_dict(m) for m in a.get("members", [])])
 
 
 @dataclass
@@ -237,19 +255,7 @@ def load_placements(path: str) -> LoadedPlacements:
             path,
         )
 
-    anchors: list[Anchor] = []
-    for a in raw.get("anchors", []):
-        members = [
-            AnchorMember(
-                scan=m["scan"],
-                points=[tuple(pt) for pt in m.get("points", [])],
-                centroid=tuple(m["centroid"]),
-                extent=tuple(m.get("extent", (0.0, 0.0, 0.0))),
-                n_points=int(m.get("n_points", len(m.get("points", [])))),
-            )
-            for m in a.get("members", [])
-        ]
-        anchors.append(Anchor(id=a["id"], members=members, label=a.get("label", "")))
+    anchors = [Anchor.from_dict(a, i) for i, a in enumerate(raw.get("anchors", []))]
 
     old_pins = raw.get("pins", [])
     if old_pins:

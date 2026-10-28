@@ -114,11 +114,13 @@ Everything the bench does is also available without the browser:
 ```powershell
 .\stitch.ps1 qa-quick     # unit and synthetic tests, about a minute
 .\stitch.ps1 qa-medium    # the browser test suite
-.\stitch.ps1 qa-slow      # real-scan regression tests (need local scan data; skipped without it)
+.\stitch.ps1 qa-slow      # whole-registration regression tests, a few minutes
 .\stitch.ps1 qa           # all of the above on a freshly built image
 ```
 
-The real-scan tests need scan data that is not in this repository and skip cleanly without it.
+The slow layer always runs `tests/test_regression_synth.py`, which aligns two generated scans of a two-room venue
+against their exactly known answer and checks that two separate processes agree to the bit. The real-scan tests need
+scan data that is not in this repository and skip cleanly without it.
 
 ## Project layout
 

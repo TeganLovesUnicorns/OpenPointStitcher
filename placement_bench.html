@@ -5592,6 +5592,8 @@ async function gateOpenImportPane(name, mode='new'){
 }
 function importAddFiles(files){
   const box=$('importUploads');
+  // Own files chosen: the folder list (ticked by default for a new project) no longer comes along unasked.
+  if(!box.children.length) $('gateImportList').querySelectorAll('input:checked').forEach(i=>{ i.checked=false; });
   box.style.display='block';
   for(const f of files){
     const row=document.createElement('div');
@@ -5704,6 +5706,7 @@ $('gateImportCancel').onclick=()=>{
   if(importMode==='add' && importUploaded){ importReopen(); return; }
   $('gateImportPane').style.display='none';
   pendingImportProject=null;
+  if(importMode==='new') gateLoadProjects();   // a project just created shows in the list straight away
 };
 function openImportForOpenProject(){
   const name=new URLSearchParams(location.search).get('project');
@@ -5842,9 +5845,11 @@ async function boot(){
     catch(e){ r=null; }
     if(r && r.ok){ enterOpenedProject(wanted); return; }
     // A bookmarked ?project=<name> that fails to open lands on the start screen with the error, rather than
-    // resuming a different project.
+    // resuming a different project; one with no scans yet offers its import pane instead.
+    const j=r ? await r.json().catch(()=>({})) : {};
     $('projectGate').style.display='block';
     gateLoadProjects();
+    if(j.no_scans){ gateOpenImportPane(wanted); return; }
     gateShowError(`could not open "${wanted}" - pick or create a project below.`);
     return;
   }

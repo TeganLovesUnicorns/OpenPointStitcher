@@ -13,7 +13,6 @@ import numpy as np
 from .exclusions import filter_scan
 from .lib.dxf import DxfWriter
 from .lib.files import write_drawing
-from .lib.poses import tilt_matrix3
 from .placement import Exclusion, Placement, label_points
 from .pts_file import Scan
 
@@ -129,11 +128,9 @@ def footprints_from_payloads(payloads: dict[str, dict], placements: dict[str, Pl
         p = placements.get(name)
         if p is None:
             continue
-        rot = tilt_matrix3(p.pitch_deg, p.roll_deg, p.yaw_deg)
         for poly in payload.get("outline", []):
             pts = np.asarray(poly, dtype=float).reshape(-1, 2)
-            world = np.column_stack([pts, np.zeros(len(pts))]) @ rot.T + np.array([p.tx, p.ty, p.tz])
-            out.append(world[:, :2])
+            out.append(p.pose.place(np.column_stack([pts, np.zeros(len(pts))]))[:, :2])
     return out
 
 

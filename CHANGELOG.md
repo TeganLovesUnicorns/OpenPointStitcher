@@ -3,6 +3,19 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.55.3 (2026-10-28)
+
+- A new regression test aligns two generated phone-style scans of a two-room venue (drift, noise, a door closed in one
+  scan and open in the other) against their known answer and checks that two separate runs agree to the bit, so the
+  slow test layer needs no real scans.
+- A project you just created shows in the project list straight away if you cancel its import.
+- Choosing your own files to import unticks the folder list, so its scans no longer come along unasked.
+- The real-scan regression test skips when no scans are mounted, instead of failing on every machine without them.
+- A bookmarked link to a project with no scans yet opens its import window, as clicking it does.
+- A project whose scans are present but whose loading hits another missing file reports that file, instead of
+  saying it has no scans.
+- Saved links read the same way everywhere: one with no id no longer stops the merge export from loading the project.
+
 ## 0.55.2 (2026-10-26)
 
 - Scans that start with a ";" or "#" comment line, such as the GeoData location line newer iPhone scanner exports

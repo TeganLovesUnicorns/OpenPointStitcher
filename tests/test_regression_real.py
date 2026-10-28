@@ -1,8 +1,10 @@
 """Regression test against a real alignment confirmed by hand. Needs the full-resolution scans: set
-OPENPOINT_TEST_SCANS to their folder. Skips when the variable is unset; fails when it points somewhere wrong."""
+OPENPOINT_TEST_SCANS to their folder. Skips when the variable is unset or the folder is empty; fails when it points
+somewhere wrong. tests/test_regression_synth.py is the version that needs no real scans."""
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import sys
@@ -22,7 +24,6 @@ MAX_ROTATION_ERROR_DEG = 1.0
 
 def _find_scans(folder: str) -> tuple[str, str]:
     """Locate the two scans, tolerating renames and thinning suffixes."""
-    import glob
     # Sorted, matching tools/hunt_nondeterminism.py, so both tools always pick the same files.
     files = sorted(glob.glob(os.path.join(folder, "*.pts")))
     src = tgt = None
@@ -47,8 +48,13 @@ def main() -> int:
         return 1
 
     src_path, tgt_path = _find_scans(folder)
+    if not glob.glob(os.path.join(folder, "*.pts")):
+        # The image always points the variable at its own, empty, mount point: with no scans there, skip.
+        # tests/test_regression_synth.py covers the same checks without real scans.
+        print(f"SKIP: {folder} holds no scans (nothing is mounted there).")
+        return 0
     if not src_path or not tgt_path:
-        # An existing folder missing the pair is a failure, not a skip.
+        # A folder of other scans missing the pair is a failure, not a skip.
         print(f"FAIL: OPENPOINT_TEST_SCANS points at {folder}, which exists, but it "
               f"does not contain both scans. Need one file with 'bar' in the "
               f"name and one with 'amp'.")

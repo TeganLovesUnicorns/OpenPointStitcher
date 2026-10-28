@@ -33,8 +33,9 @@ SPLIT = {"tests/test_pairwise.py": 4, "tests/test_adaptive_voxel.py": 2, "tests/
 # MEDIUM: the browser suite, against a bench on a copy of a project.
 MEDIUM = ["tests/test_browser_bench.py"]
 
-# SLOW: the real scans, each in its own process (cross-process differences are invisible otherwise).
-SLOW = ["tests/test_regression_real.py", "tests/test_acceptance.py", "tests/test_cancel_stages.py"]
+# SLOW: whole registrations, each in its own process (cross-process differences are invisible otherwise).
+SLOW = ["tests/test_regression_synth.py", "tests/test_regression_real.py", "tests/test_acceptance.py",
+        "tests/test_cancel_stages.py"]
 
 # Tests that need the developer's own venue data or docs; they are not in the public repository and are skipped
 # when absent.

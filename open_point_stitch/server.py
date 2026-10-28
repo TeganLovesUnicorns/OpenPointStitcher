@@ -43,7 +43,7 @@ from open_point_stitch.align_tilt import apply_suggestions, full_resolution_inpu
 from open_point_stitch.overlap import nearest_distances
 from open_point_stitch.merge import place_merge
 from open_point_stitch.placement import world_boxes
-from open_point_stitch.placement import (SCHEMA as PLACEMENT_SCHEMA, Anchor, AnchorMember, Exclusion, Placement,
+from open_point_stitch.placement import (SCHEMA as PLACEMENT_SCHEMA, Anchor, Exclusion, Placement,
                                     anchors_from_landmarks, is_placement_schema, load_placements,
                                     relative_transform)
 from open_point_stitch.lib.files import write_json_atomic
@@ -405,7 +405,6 @@ def _placement_lock(out_dir: str):
 def _write_placement(out_dir: str, data: dict) -> None:
     """Locked, atomic (temp file plus os.replace) overwrite of the whole placement, for Save, Clear links and
     Revert. Alignment results must use _write_placement_merged instead."""
-    path = _placement_path(out_dir)
     os.makedirs(out_dir, exist_ok=True)
     with _placement_lock(out_dir):
         _write_placement_locked(out_dir, data)
@@ -550,23 +549,8 @@ def _job(failed: str, needs: Optional[str] = None):
 def _anchors_from_placement(data: dict) -> list:
     """The saved anchors as Anchor objects, exactly as stored (raw local frame). Shared by align-from-links and the
     links stage of a combined run, so the two never drift apart."""
-    return [
-        Anchor(
-            id=a.get("id", f"anchor-{i}"),
-            label=a.get("label", ""),
-            members=[
-                AnchorMember(
-                    scan=m["scan"],
-                    points=[tuple(pt) for pt in m.get("points", [])],
-                    centroid=tuple(m["centroid"]),
-                    extent=tuple(m.get("extent", (0.0, 0.0, 0.0))),
-                    n_points=int(m.get("n_points", len(m.get("points", [])))),
-                )
-                for m in a.get("members", [])
-            ],
-        )
-        for i, a in enumerate(data.get("anchors", []))
-    ] + anchors_from_landmarks(data.get("landmarks", []))     # same name in two scans
+    return ([Anchor.from_dict(a, i) for i, a in enumerate(data.get("anchors", []))]
+            + anchors_from_landmarks(data.get("landmarks", [])))     # same name in two scans
 
 
 @_job("align job failed")
@@ -2085,10 +2069,10 @@ class Session:
             except OSError:
                 log.exception("%s: folder tidy-up failed, keeping the old layout (not fatal)", name)
             _auto_tidy_backups(pdir)
-            try:
-                new_app = App(raw_dir, pdir, self.pattern)
-            except FileNotFoundError:
-                raise ProjectHasNoScans(f"project {name!r} has no scans yet - add some to open it") from None
+            # Checked here rather than by catching App's FileNotFoundError, which a missing cache file also raises.
+            if not build_bench.find_scans(raw_dir, self.pattern):
+                raise ProjectHasNoScans(f"project {name!r} has no scans yet - add some to open it")
+            new_app = App(raw_dir, pdir, self.pattern)
             old_app = self.app
             self.app = new_app
             self.active_project = name
@@ -2145,8 +2129,7 @@ def make_handler(session: Session):
         def do_GET(self):
             try:
                 # Route on the path without its query string.
-                _split = urllib.parse.urlsplit(self.path)
-                path, query = _split.path, urllib.parse.parse_qs(_split.query)
+                path = urllib.parse.urlsplit(self.path).path
                 if path == "/" or path == "/index.html":
                     page = session.page_html  # one read: dev mode rebuilds this per access
                     self._reply(200, page, "text/html; charset=utf-8")

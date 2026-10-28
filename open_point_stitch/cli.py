@@ -205,7 +205,6 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.wall_pair:
             import open3d as o3d
-            from .config import PipelineConfig
             from .limits import apply_seed
             from .find_walls import solve_from_named_pairs
             from .align_pair import interpenetration

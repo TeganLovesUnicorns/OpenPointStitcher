@@ -115,6 +115,27 @@ def test_an_unknown_schema_is_refused():
     raise AssertionError("an unknown schema should raise ValueError")
 
 
+def test_saved_links_load_the_same_for_the_file_reader_and_the_server():
+    from open_point_stitch.server import _anchors_from_placement
+    member = {"scan": "a", "points": [[1, 2, 3]], "centroid": [1, 2, 3]}
+    data = {"schema": SCHEMA, "scans": [{"name": "a"}, {"name": "b"}],
+            "anchors": [{"members": [member, {**member, "scan": "b"}]}]}       # no id: an older or hand-made file
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "placement.json")
+        with open(path, "w") as fh:
+            json.dump(data, fh)
+        from_file = load_placements(path).anchors
+    assert from_file == _anchors_from_placement(data), (from_file, _anchors_from_placement(data))
+    assert from_file[0].id == "anchor-0" and from_file[0].members[0].n_points == 1
+
+
+def test_a_placement_places_points_as_the_bench_draws_them():
+    p = Placement(name="x", yaw_deg=30.0, pitch_deg=2.0, roll_deg=-1.0, tx=4.0, ty=-1.0, tz=0.5)
+    local = np.array([[1.0, 2.0, 0.3], [0.0, 0.0, 0.0]])
+    level_identity = p.matrix()                     # floor_z 0 and no levelling: the same move as pose.place
+    assert np.allclose(p.pose.place(local), local @ level_identity[:3, :3].T + level_identity[:3, 3])
+
+
 if __name__ == "__main__":
     from support import run_tests
     raise SystemExit(run_tests(globals()))

@@ -12,7 +12,6 @@ import numpy as np
 
 from .lib.geometry import fold_between
 from .lib.groups import connected_groups
-from .lib.poses import tilt_matrix3
 from .placement import Placement
 from .pts_file import Scan
 
@@ -56,9 +55,8 @@ def _segments(payloads: dict[str, dict], placements: dict[str, Placement]) -> li
         p = placements.get(name)
         if p is None:
             continue
-        rot = tilt_matrix3(p.pitch_deg, p.roll_deg, p.yaw_deg)
         for w in payload.get("planes", payload.get("walls", [])):
-            ends = np.array([[w["x1"], w["y1"], 1.0], [w["x2"], w["y2"], 1.0]]) @ rot.T + [p.tx, p.ty, p.tz]
+            ends = p.pose.place(np.array([[w["x1"], w["y1"], 1.0], [w["x2"], w["y2"], 1.0]]))
             a, b = ends[0, :2], ends[1, :2]
             length = float(np.linalg.norm(b - a))
             if length < 0.5:
