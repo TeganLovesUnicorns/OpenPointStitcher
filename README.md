@@ -125,6 +125,11 @@ Everything the bench does is also available without the browser:
 .\stitch.ps1 qa           # all of the above on a freshly built image
 ```
 
+None of the layers needs scans of your own. The browser layer runs on a generated family flat
+(`tests/synthetic_apartment.py`): eight phone-style scans of its rooms, terrace and garden, each with its own paint,
+floors and furniture, built into `out-qa/` the first time (about 70 MB, 20 seconds) and reused after. Every bench in
+the run starts from the same saved layout, with each scan where it really is in the flat.
+
 The slow layer always runs `tests/test_regression_synth.py`, which aligns two generated scans of a two-room venue
 against their exactly known answer and checks that two separate processes agree to the bit. The real-scan regression
 test (`tests/test_regression_real.py`) needs a pair of real scans kept in their own repository, and skips cleanly

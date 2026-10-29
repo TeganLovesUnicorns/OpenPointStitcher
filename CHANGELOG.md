@@ -3,6 +3,19 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.60.0 (2026-10-29)
+
+- The browser tests run on any machine with no scans of your own: QA generates a family flat of eight room scans
+  (living room, terrace and garden, hall, two bedrooms, bathroom, kids' room, kitchen), each with its own paint,
+  floors and furniture, and starts every test from the flat as it really is.
+- `stitch.ps1 qa` and `stitch.sh qa` run without a `scans` folder.
+- The Floor height panel finds the floor and ceiling of a room of ordinary height: its bands now count only flat
+  surfaces, where before the walls filled every height and merged everything into one band (no ceiling found).
+  Previews rebuild once to pick this up.
+- Browser tests fixed where they relied on the old sample venue: the saved-pose test no longer leaves the project
+  scattered for the tests after it, and the site-measurement test finds the wall across even when the two walls face
+  opposite ways.
+
 ## 0.56.0 (2026-10-26)
 
 - A scan can be taken out of an open project: right-click it and choose "Remove from project". Its file moves to

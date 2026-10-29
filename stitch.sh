@@ -48,7 +48,11 @@ if [ "$cmd" = "build" ]; then do_build; exit 0; fi
 
 if [ "$cmd" = "help" ]; then sed -n '2,14p' "$0"; exit 0; fi
 
-# A missing mount source becomes an empty root-owned folder, which looks like "my scans vanished".
+# A missing mount source becomes an empty root-owned folder, which looks like "my scans vanished". QA needs no scans
+# of yours (the browser layer generates its own), so it mounts an empty folder of its own instead.
+if [ ! -d "$scans" ] && [[ "$cmd" == qa* ]]; then
+  scans="${OUT_QA:-$root/out-qa}/no-scans"; mkdir -p "$scans"
+fi
 [ -d "$scans" ] || { echo "No scans folder at $scans. Create it and put your .pts exports in it, or set SCANS." >&2; exit 1; }
 mkdir -p "$out" "$projects"
 

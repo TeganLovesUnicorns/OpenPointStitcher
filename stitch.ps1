@@ -56,7 +56,12 @@ if ($Command -eq 'build') {
 }
 
 # Docker will happily create a missing mount source as an empty root-owned
-# directory, which then looks like "my scans vanished". Better to say so.
+# directory, which then looks like "my scans vanished". Better to say so. QA needs no scans of yours (the browser
+# layer generates its own), so it mounts an empty folder of its own instead.
+if (-not (Test-Path $scans) -and $Command -like 'qa*') {
+  $scans = Join-Path $(if ($env:OUT_QA) { $env:OUT_QA } else { Join-Path $root 'out-qa' }) 'no-scans'
+  New-Item -ItemType Directory -Force -Path $scans | Out-Null
+}
 if (-not (Test-Path $scans)) {
   Write-Error "No scans folder at $scans. Create it and put your .pts exports in it, or set `$env:SCANS."
 }
