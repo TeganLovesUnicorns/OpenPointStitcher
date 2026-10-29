@@ -35,6 +35,9 @@ log = logging.getLogger(__name__)
 PREVIEW_VOXEL = 0.03        # metres; fine grid for level and wall finding, not the display budget
 PREVIEW_MAX_POINTS = 8000   # browser point cap
 BAND_BIN_M = 0.05           # bin width for the floor-height histogram
+# The histogram counts only points on flat surfaces (normal within ~25 degrees of vertical): in a room of ordinary
+# height the walls fill every bin, and the floor and ceiling would merge with them into one band.
+BAND_MIN_NZ = 0.9
 
 
 PREVIEW_BIN_M = 0.05   # counting-grid bin (metres) that measures local crowding; never an output point
@@ -87,7 +90,7 @@ def quick_bbox_payload(path: str) -> dict:
 TEMPLATE = os.path.join(ROOT, "placement_bench.html")
 
 # Bump whenever build_scan_payload's OUTPUT SHAPE changes, so old caches are not reused.
-BUILDER_VERSION = 11  # bump whenever the wall finder's output changes, so cached previews rebuild
+BUILDER_VERSION = 12  # bump whenever the wall finder's or the bands' output changes, so cached previews rebuild
 WALL_FINDER_SINCE = 11  # previews older than this had another wall finder: hand wall edits on them are frozen first.
                         # Raise it with BUILDER_VERSION whenever the walls change (test_wall_finder_fingerprint)
 CACHE_DIRNAME = ".bench_cache"
@@ -269,7 +272,8 @@ def build_scan_payload(path: str, preview_max_points: int = PREVIEW_MAX_POINTS, 
     # Height range above the floor, for the 3D bounding cube.
     height_all = np.asarray(down.points)[:, 2] - level.floor_z            # stairs included: the box holds them
     z_range = [round(float(height_all.min()), 3), round(float(height_all.max()), 3)]
-    bands = _floor_bands(height_fine)
+    flat = np.abs(np.asarray(structure.normals)[:, 2]) >= BAND_MIN_NZ
+    bands = _floor_bands(height_fine[flat] if flat.sum() >= 50 else height_fine)
 
     # Stage 2: browser point budget, drawn points only.
     keep_idx, thin_frac = _density_preserving_preview(
