@@ -119,8 +119,16 @@ Everything the bench does is also available without the browser:
 ```
 
 The slow layer always runs `tests/test_regression_synth.py`, which aligns two generated scans of a two-room venue
-against their exactly known answer and checks that two separate processes agree to the bit. The real-scan tests need
-scan data that is not in this repository and skip cleanly without it.
+against their exactly known answer and checks that two separate processes agree to the bit. The real-scan regression
+test (`tests/test_regression_real.py`) needs a pair of real scans kept in their own repository, and skips cleanly
+without them. Clone it as `scans-regression` inside this checkout and the launchers mount it:
+
+```powershell
+git clone https://github.com/TeganLovesUnicorns/OpenPointStitcher-regression-scans.git scans-regression
+```
+
+The real pair catches alignment mistakes that the generated pair does not, so run with it before changing anything
+in registration.
 
 ## Project layout
 

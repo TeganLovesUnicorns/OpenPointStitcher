@@ -1493,6 +1493,34 @@ def test_wheel_zoom_in_a_level_view_holds_the_point_under_the_cursor(page):
     print(f"    zoom {s_before:.1f} -> {s_after:.1f} px/m held the point under the cursor within 0.01 px")
 
 
+def test_a_burst_of_wheel_events_zooms_by_distance_and_draws_once(page):
+    """A touchpad sends many small wheel events per frame. The zoom follows the distance scrolled, in pixels or lines,
+    so it is the same however a browser batches them, and the view redraws once per frame, not once per event."""
+    _goto(page)
+    result = page.evaluate("""async () => {
+        const r = cv.getBoundingClientRect(), x = r.left + 300, y = r.top + 200;
+        const wheel = (dy, mode) => cv.dispatchEvent(new WheelEvent('wheel',
+            {clientX: x, clientY: y, deltaY: dy, deltaMode: mode, bubbles: true, cancelable: true}));
+        await new Promise(res => requestAnimationFrame(res));
+        const realGL = glDrawPoints; let draws = 0;
+        glDrawPoints = function () { draws++; return realGL.apply(this, arguments); };
+        try {
+            const s0 = cam.s;
+            for (let i = 0; i < 20; i++) wheel(-5, 0);           // 20 x 5 px = one notch, in one frame
+            const pixels = cam.s / s0, drawsNow = draws;
+            await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
+            const s1 = cam.s;
+            for (let i = 0; i < 4; i++) wheel(1.5, 1);            // 4 x 1.5 lines = one notch out
+            return {pixels, lines: cam.s / s1, drawsNow, drawsAfterFrame: draws};
+        } finally { glDrawPoints = realGL; }
+    }""")
+    assert abs(result["pixels"] - 1.1) < 1e-6, f"one notch of small pixel steps zoomed x{result['pixels']}, not x1.1"
+    assert abs(result["lines"] - 1 / 1.1) < 1e-6, f"one notch of small line steps zoomed x{result['lines']}, not x1/1.1"
+    assert result["drawsNow"] == 0, f"{result['drawsNow']} redraws ran inside the burst instead of waiting for the frame"
+    assert result["drawsAfterFrame"] == 1, f"20 wheel events in one frame drew {result['drawsAfterFrame']} times, not once"
+    print(f"    20 pixel steps zoomed x{result['pixels']:.4f}, 4 line steps x{result['lines']:.4f}, one redraw")
+
+
 def test_run_status_lines_say_what_actually_ran(page):
     """The post-run vote and coarse-search lines follow what the server reports, not the checkboxes."""
     _goto(page)
@@ -4968,6 +4996,7 @@ TESTS = [
     test_side_view_boxes_and_walls_draw_flat,
     test_projection_is_orthographic,
     test_wheel_zoom_in_a_level_view_holds_the_point_under_the_cursor,
+    test_a_burst_of_wheel_events_zooms_by_distance_and_draws_once,
     test_run_status_lines_say_what_actually_ran,
     test_links_table_shows_a_refined_seed_pair_as_moved_not_kept,
     test_run_summary_counts_kept_placements_apart_from_real_matches,

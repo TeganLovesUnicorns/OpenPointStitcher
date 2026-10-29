@@ -748,7 +748,7 @@ const MAX_SCANS=32;
 const GL_VS=`
   attribute vec2 aXY;      // this point's LOCAL x,y (pre-yaw, pre-translate)
   attribute float aH;      // this point's local height (matches JS s.h[k])
-  attribute vec3 aRGB;     // 0..1, already normalised on upload
+  attribute vec3 aRGB;     // 0..1, stored as bytes and normalised by the GPU
   attribute float aScanId; // which scan this point belongs to (s.i)
 
   uniform vec2 uCanvas;             // canvas width, height in CSS px
@@ -865,8 +865,9 @@ function glCompile(gl,type,src){
   return sh;
 }
 function initGL(){
-  const gl=cvgl.getContext('webgl',{antialias:true,alpha:false})
-          || cvgl.getContext('experimental-webgl',{antialias:true,alpha:false});
+  // high-performance asks a laptop with two graphics chips for the faster one; elsewhere it changes nothing.
+  const opts={antialias:true,alpha:false,powerPreference:'high-performance'};
+  const gl=cvgl.getContext('webgl',opts) || cvgl.getContext('experimental-webgl',opts);
   if(!gl){ console.warn('WebGL unavailable; point cloud falls back to the 2D canvas.'); return null; }
   const vs=glCompile(gl,gl.VERTEX_SHADER,GL_VS), fs=glCompile(gl,gl.FRAGMENT_SHADER,GL_FS);
   if(!vs||!fs) return null;
@@ -907,8 +908,8 @@ function initGL(){
       uOpacity: gl.getUniformLocation(prog,'uOpacity'),
     },
   };
-  // STRIDE is 7 floats per point: x,y,h,r,g,b,scanId.
-  r.STRIDE=7*4;
+  // 16 bytes per point: x,y,h as floats, then r,g,b,scanId as bytes (colour normalised to 0..1 by the GPU).
+  r.STRIDE=16;
   gl.clearColor(0x0b/255,0x0e/255,0x12/255,1); // matches cv's old '#0b0e12' fill
   return r;
 }
@@ -928,8 +929,8 @@ function glRebuildPoints(){
     const n=nPoints(s), gone=s._removed;
     if(!gone || keepsGone(s)) total+=n; else for(let k=0;k<n;k++) if(!gone[k]) total++;
   }
-  const data=new Float32Array(total*7);
-  let o=0;
+  const bytes=new ArrayBuffer(total*16), f32=new Float32Array(bytes), u8=new Uint8ClampedArray(bytes);
+  let o=0; // point index
   for(const s of S){
     if(!s.vis) continue; // hidden: excluded from the GPU buffer, not just shader-discarded
     if(s.i>=MAX_SCANS){ console.warn(`${s.name}: scan index ${s.i} exceeds MAX_SCANS (${MAX_SCANS}), dropped from the WebGL buffer.`); continue; }
@@ -942,55 +943,35 @@ function glRebuildPoints(){
     const flat=rev&&!$('cbCol').checked;                     // True colour off in review: one light colour, marks keep theirs
     for(let k=0,n=nPoints(s);k<n;k++){
       if(gone&&gone[k]&&!keep) continue;
-      data[o++]=xy[k*2]; data[o++]=xy[k*2+1]; data[o++]=h[k];
+      const f=o*4, b=o*16+12; o++;
+      f32[f]=xy[k*2]; f32[f+1]=xy[k*2+1]; f32[f+2]=h[k];
       const c=(selMask&&selMask[k]) ? REVIEW_SEL_RGB : (gone&&gone[k]) ? REVIEW_GONE_RGB
         : (stairs&&stairs[k]) ? REVIEW_STAIRS_RGB
         : (marks&&marks[k]) ? REVIEW_LANDMARK_RGB
         : (labels&&labels[k]>=0) ? LABEL_CLASSES[labels[k]][2]
         : heat ? heat[k] : flat ? REVIEW_FLAT_RGB : (rgb[k]||[200,200,200]);
-      data[o++]=c[0]/255; data[o++]=c[1]/255; data[o++]=c[2]/255;
-      data[o++]=idx;
+      u8[b]=c[0]; u8[b+1]=c[1]; u8[b+2]=c[2]; u8[b+3]=idx;
     }
   }
   gl.bindBuffer(gl.ARRAY_BUFFER,glr.buf);
-  gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW); // DYNAMIC: rebuilt a handful of times, not static
+  gl.bufferData(gl.ARRAY_BUFFER,bytes,gl.DYNAMIC_DRAW); // DYNAMIC: rebuilt a handful of times, not static
   glr.nPoints=total;
+  glr.gen=(glr.gen||0)+1;
 }
 function glResize(){
   if(!glr)return;
   glr.gl.viewport(0,0,cvgl.width,cvgl.height);
+  glr.lastKey=null; // a resized canvas starts blank
 }
-// One call draws every visible scan's points at once - the batching that
-// makes this fast. Called from draw() in place of the old per-scan,
-// per-point canvas2D loop.
-function glDrawPoints(){
+// Draws every visible scan's points in one call. With mayReuse, a frame whose inputs (the same values sent to the
+// GPU below, the buffer and the canvas size) match the last one is skipped: the canvas keeps showing that picture.
+// A plain draw() always draws, because code that copies the canvas right after needs a fresh buffer.
+function glDrawPoints(mayReuse){
   if(!glr)return;
   if(glr.dirty) glRebuildPoints();
   const {gl,loc}=glr;
-  if(!glr.nPoints){ gl.clearColor(themeCanvas.rgb[0],themeCanvas.rgb[1],themeCanvas.rgb[2],1); gl.clear(gl.COLOR_BUFFER_BIT); return; } // nothing loaded yet, still clear
-  gl.useProgram(glr.prog);
-  gl.bindBuffer(gl.ARRAY_BUFFER,glr.buf);
-  gl.enableVertexAttribArray(loc.aXY); gl.vertexAttribPointer(loc.aXY,2,gl.FLOAT,false,glr.STRIDE,0);
-  gl.enableVertexAttribArray(loc.aH); gl.vertexAttribPointer(loc.aH,1,gl.FLOAT,false,glr.STRIDE,8);
-  gl.enableVertexAttribArray(loc.aRGB); gl.vertexAttribPointer(loc.aRGB,3,gl.FLOAT,false,glr.STRIDE,12);
-  gl.enableVertexAttribArray(loc.aScanId); gl.vertexAttribPointer(loc.aScanId,1,gl.FLOAT,false,glr.STRIDE,24);
-
-  gl.uniform2f(loc.uCanvas,cvgl.width,cvgl.height);
-  gl.uniform4f(loc.uCam,cam.x,cam.y,cam.s,cam.z);
-  gl.uniform1f(loc.uAzi,azi*D2R);
-  gl.uniform1f(loc.uEle,ele*D2R);
-  gl.uniform1f(loc.uSelScan,sel);
-  gl.uniform1f(loc.uPointSize,(+$('pointSize').value/10));
-  gl.uniform1f(loc.uMaxPointSize,glr.maxPointSize);
-  gl.uniform3f(loc.uClipOn, clipAxisActive('x')?1:0, clipAxisActive('y')?1:0, clipAxisActive('z')?1:0);
-  gl.uniform3f(loc.uClipLo, (clip.x.lo??0)/100, (clip.y.lo??0)/100, (clip.z.lo??0)/100);
-  gl.uniform3f(loc.uClipHi, (clip.x.hi??0)/100, (clip.y.hi??0)/100, (clip.z.hi??0)/100);
-  // 0 (the element's default) is a hard cutoff.
-  gl.uniform1f(loc.uOutOfClipOpacity, $('outOfClipOpacity')?+$('outOfClipOpacity').value/100:0);
-  gl.uniform1f(loc.uTrueColor, ($('cbCol').checked||review)?1:0);   // review always shows real colour (and its red selection)
-  gl.uniform1f(loc.uDepthCue, $('cbDepthCue').checked?1:0);
-  gl.uniform1f(loc.uDepthSpan, Math.max(cvgl.width/cam.s/2, 5));
-  gl.uniform1f(loc.uOpacity, +$('opacity').value/100);
+  const bg=themeCanvas.rgb;
+  if(!glr.nPoints){ glr.lastKey=null; gl.clearColor(bg[0],bg[1],bg[2],1); gl.clear(gl.COLOR_BUFFER_BIT); return; } // nothing loaded yet, still clear
 
   // "Show my original placement": the GPU pose uniform and the CPU-side place() (hit-testing, outlines) must read
   // the same toggle, or they would show different things at once.
@@ -1005,6 +986,44 @@ function glDrawPoints(){
     vis[i]=s.vis?1:0;
     col[i*3]=s.col[0]/255; col[i*3+1]=s.col[1]/255; col[i*3+2]=s.col[2]/255;
   }
+  const u={
+    canvas:[cvgl.width,cvgl.height], cam:[cam.x,cam.y,cam.s,cam.z], azi:azi*D2R, ele:ele*D2R, sel,
+    pointSize:+$('pointSize').value/10,
+    clipOn:[clipAxisActive('x')?1:0, clipAxisActive('y')?1:0, clipAxisActive('z')?1:0],
+    clipLo:[(clip.x.lo??0)/100, (clip.y.lo??0)/100, (clip.z.lo??0)/100],
+    clipHi:[(clip.x.hi??0)/100, (clip.y.hi??0)/100, (clip.z.hi??0)/100],
+    // 0 (the element's default) is a hard cutoff.
+    outOfClip:$('outOfClipOpacity')?+$('outOfClipOpacity').value/100:0,
+    trueColor:($('cbCol').checked||review)?1:0,   // review always shows real colour (and its red selection)
+    depthCue:$('cbDepthCue').checked?1:0, depthSpan:Math.max(cvgl.width/cam.s/2, 5),
+    opacity:+$('opacity').value/100, add:$('cbAdd').checked, bg:[bg[0],bg[1],bg[2]],
+  };
+  const key=JSON.stringify(u)+'|'+glr.gen+'|'+glr.nPoints+'|'+pose+'|'+tiltPR+'|'+vis+'|'+col;
+  if(mayReuse && key===glr.lastKey) return;
+  glr.lastKey=key;
+
+  gl.useProgram(glr.prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER,glr.buf);
+  gl.enableVertexAttribArray(loc.aXY); gl.vertexAttribPointer(loc.aXY,2,gl.FLOAT,false,glr.STRIDE,0);
+  gl.enableVertexAttribArray(loc.aH); gl.vertexAttribPointer(loc.aH,1,gl.FLOAT,false,glr.STRIDE,8);
+  gl.enableVertexAttribArray(loc.aRGB); gl.vertexAttribPointer(loc.aRGB,3,gl.UNSIGNED_BYTE,true,glr.STRIDE,12);
+  gl.enableVertexAttribArray(loc.aScanId); gl.vertexAttribPointer(loc.aScanId,1,gl.UNSIGNED_BYTE,false,glr.STRIDE,15);
+
+  gl.uniform2f(loc.uCanvas,...u.canvas);
+  gl.uniform4f(loc.uCam,...u.cam);
+  gl.uniform1f(loc.uAzi,u.azi);
+  gl.uniform1f(loc.uEle,u.ele);
+  gl.uniform1f(loc.uSelScan,u.sel);
+  gl.uniform1f(loc.uPointSize,u.pointSize);
+  gl.uniform1f(loc.uMaxPointSize,glr.maxPointSize);
+  gl.uniform3f(loc.uClipOn,...u.clipOn);
+  gl.uniform3f(loc.uClipLo,...u.clipLo);
+  gl.uniform3f(loc.uClipHi,...u.clipHi);
+  gl.uniform1f(loc.uOutOfClipOpacity,u.outOfClip);
+  gl.uniform1f(loc.uTrueColor,u.trueColor);
+  gl.uniform1f(loc.uDepthCue,u.depthCue);
+  gl.uniform1f(loc.uDepthSpan,u.depthSpan);
+  gl.uniform1f(loc.uOpacity,u.opacity);
   gl.uniform4fv(loc.uPose,pose);
   gl.uniform2fv(loc.uTiltPR,tiltPR);
   gl.uniform1fv(loc.uVisible,vis);
@@ -1012,10 +1031,10 @@ function glDrawPoints(){
 
   gl.enable(gl.BLEND);
   // Additive blending when the glow toggle is on, plain alpha otherwise: overlapping scans brighten where they agree.
-  if($('cbAdd').checked) gl.blendFunc(gl.SRC_ALPHA,gl.ONE);
+  if(u.add) gl.blendFunc(gl.SRC_ALPHA,gl.ONE);
   else gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
   gl.disable(gl.DEPTH_TEST);
-  gl.clearColor(themeCanvas.rgb[0],themeCanvas.rgb[1],themeCanvas.rgb[2],1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.clearColor(bg[0],bg[1],bg[2],1); gl.clear(gl.COLOR_BUFFER_BIT);
   gl.drawArrays(gl.POINTS,0,glr.nPoints);
 }
 glr=initGL();
@@ -1901,12 +1920,20 @@ function updateViewCube(){
   const ax=document.getElementById('viewcubeAxes');
   if(ax)ax.style.transform=`rotate(${azi}deg)`;
 }
-function draw(){
+// Input handlers ask for a redraw instead of drawing: a fast mouse or a touchpad can send dozens of events per
+// frame, and only the last state is ever seen. draw() itself still draws at once, for everything else.
+let _drawFrame=0;
+function requestDraw(){
+  if(!_drawFrame) _drawFrame=requestAnimationFrame(()=>{ _drawFrame=0; draw(true); });
+}
+// fromFrame: called by requestDraw, so an unchanged point picture may be kept (see glDrawPoints).
+function draw(fromFrame){
+  if(_drawFrame){ cancelAnimationFrame(_drawFrame); _drawFrame=0; }
   updateViewCube();
   if(glr){
     // cvgl paints the background and every scan's points in one call; cv stays transparent over it.
     cx.clearRect(0,0,cv.width,cv.height);
-    glDrawPoints();
+    glDrawPoints(fromFrame===true);
   } else {
     cx.fillStyle=themeCanvas.hex;cx.fillRect(0,0,cv.width,cv.height);
   }
@@ -2255,12 +2282,29 @@ function anchorScreenPt(s,raw){
   const w=anchorWorldPt(s,raw);
   return proj(w.xy[0],w.xy[1],w.z);
 }
-// True when every point of this member (its stored sample, or the centroid for an older link) is clipped out, so
-// its marker hides with the points. A region only partly inside the slice still shows.
-function memberClippedOut(s,m){
-  const pts=(m.points&&m.points.length?m.points:[m.centroid]);
-  return pts.every(raw=>{const w=anchorWorldPt(s,raw); return isClipped(w.xy,w.z);});
+// A member's stored points (its sample, or the centroid for an older link) in scan-local x, y, height. They do not
+// depend on the pose, so they are kept until the points or the scan's levelling change. A WeakMap, so nothing extra
+// is saved with the member.
+const _markerLocal=new WeakMap();
+function markerLocalPts(s,m){
+  const raws=(m.points&&m.points.length?m.points:[m.centroid]), c=_markerLocal.get(m);
+  if(c && c.raws===raws && c.R===s.level_rotation && c.fz===s.floor_z) return c.pts;
+  const pts=raws.map(raw=>{ const lv=leveledFromRaw(s,raw); return [lv.xy[0],lv.xy[1],lv.h]; });
+  _markerLocal.set(m,{raws,R:s.level_rotation,fz:s.floor_z,pts});
+  return pts;
 }
+// Screen positions of a member's points under the current pose, leaving out each point the clip hides.
+function markerScreenPts(s,m){
+  const toWorld=localToWorldFn(s), out=[];
+  for(const p of markerLocalPts(s,m)){
+    const w=toWorld(p[0],p[1],p[2]);
+    if(!isClipped([w[0],w[1]],w[2])) out.push(proj(w[0],w[1],w[2]));
+  }
+  return out;
+}
+// True when every point of this member is clipped out, so its marker hides with the points. A region only partly
+// inside the slice still shows.
+function memberClippedOut(s,m){ return markerScreenPts(s,m).length===0; }
 // Marker visibility, cycled with the 'i' hotkey: every scan's markers, only the selected scan's, or none. Applies on
 // top of the clip-driven hiding above.
 let indicatorVisMode='all'; // 'all' | 'selected' | 'none'
@@ -2279,19 +2323,20 @@ function indicatorVisibleFor(scanName){
 function drawAnchorMember(m,color){
   const s=S.find(x=>x.name===m.scan); if(!s||!s.vis)return null;
   if(!indicatorVisibleFor(m.scan))return null;
-  if(memberClippedOut(s,m))return null;
+  const pts=markerScreenPts(s,m);
+  if(!pts.length)return null;
   cx.strokeStyle=color;cx.lineWidth=1.2;
-  drawMarkerPoints(s,m);
+  strokeMarkerRings(pts);
   const cp=anchorScreenPt(s,m.centroid);
   cx.fillStyle=color;cx.beginPath();cx.arc(cp[0],cp[1],5,0,7);cx.fill();
   return cp;
 }
-// One small circle per stored point, each skipped when its own point is clipped out.
-function drawMarkerPoints(s,m){
-  for(const raw of (m.points&&m.points.length?m.points:[m.centroid])){
-    const w=anchorWorldPt(s,raw); if(isClipped(w.xy,w.z)) continue;
-    const p=proj(w.xy[0],w.xy[1],w.z); cx.beginPath();cx.arc(p[0],p[1],2.5,0,7);cx.stroke();
-  }
+// One small circle per point, all in one path: a stroke per circle costs far more, and the colour is opaque, so
+// overlaps look the same.
+function strokeMarkerRings(pts){
+  cx.beginPath();
+  for(const p of pts){ cx.moveTo(p[0]+2.5,p[1]); cx.arc(p[0],p[1],2.5,0,2*Math.PI); }
+  cx.stroke();
 }
 function drawAnchors(){
   anchors.forEach((a,i)=>{
@@ -3318,22 +3363,30 @@ addEventListener('keydown',e=>{
   else if(e.key==='Escape'){ e.preventDefault(); e.stopImmediatePropagation(); reviewClearSelection(); }
 },true);
 
+// Every region's rings, then every centre dot and cross, each as one path: all one opaque colour, so this looks the
+// same as drawing region by region, at a fraction of the cost.
 function drawExclusions(){
-  exclusions.forEach(e=>{
-    if(e.source==='review') return;            // review removals are hidden points, not a marked region
-    const s=S.find(x=>x.name===e.scan); if(!s||!s.vis)return;
-    if(!indicatorVisibleFor(e.scan))return;
-    if(memberClippedOut(s,e))return; // same rule as link markers
-    cx.strokeStyle='#d95a6b';cx.lineWidth=1.2;
-    drawMarkerPoints(s,e);
-    const cp=anchorScreenPt(s,e.centroid);
-    cx.fillStyle='#d95a6b';cx.beginPath();cx.arc(cp[0],cp[1],4,0,7);cx.fill();
-    cx.strokeStyle='#d95a6b';cx.lineWidth=1.5;
-    cx.beginPath();
-    cx.moveTo(cp[0]-6,cp[1]-6);cx.lineTo(cp[0]+6,cp[1]+6);
-    cx.moveTo(cp[0]-6,cp[1]+6);cx.lineTo(cp[0]+6,cp[1]-6);
-    cx.stroke();
-  });
+  const rings=[], centres=[];
+  for(const e of exclusions){
+    if(e.source==='review') continue;          // review removals are hidden points, not a marked region
+    const s=S.find(x=>x.name===e.scan); if(!s||!s.vis) continue;
+    if(!indicatorVisibleFor(e.scan)) continue;
+    const pts=markerScreenPts(s,e);
+    if(!pts.length) continue;                  // every point clipped out: same rule as link markers
+    rings.push(...pts); centres.push(anchorScreenPt(s,e.centroid));
+  }
+  if(!centres.length) return;
+  cx.strokeStyle='#d95a6b'; cx.lineWidth=1.2;
+  strokeMarkerRings(rings);
+  cx.fillStyle='#d95a6b'; cx.beginPath();
+  for(const cp of centres){ cx.moveTo(cp[0]+4,cp[1]); cx.arc(cp[0],cp[1],4,0,2*Math.PI); }
+  cx.fill();
+  cx.lineWidth=1.5; cx.beginPath();
+  for(const cp of centres){
+    cx.moveTo(cp[0]-6,cp[1]-6); cx.lineTo(cp[0]+6,cp[1]+6);
+    cx.moveTo(cp[0]-6,cp[1]+6); cx.lineTo(cp[0]+6,cp[1]-6);
+  }
+  cx.stroke();
 }
 
 // Builds LINKS rows; call from bootScans() after S is populated, never at script parse.
@@ -3577,7 +3630,7 @@ cv.addEventListener('mousemove',e=>{
   if(tool==='measure'&&view==='plan'){
     const h=measureHit(e.clientX-r.left,e.clientY-r.top), was=measureHover&&measureHover.vw;
     measureHover=h; cv.style.cursor=h?'pointer':'crosshair';
-    if((h&&h.vw)!==was) draw();
+    if((h&&h.vw)!==was) requestDraw();
     return;
   }
   cv.style.cursor=(tool!=='anchor'&&tool!=='navigate'&&gizmoHit(e.clientX-r.left,e.clientY-r.top))?'grab':toolCursor();
@@ -3585,29 +3638,29 @@ cv.addEventListener('mousemove',e=>{
 addEventListener('mousemove',e=>{
   if(!drag)return;
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-  if(drag.mode==='anchorbox'){drag.x1=mx;drag.y1=my;draw();return;}
+  if(drag.mode==='anchorbox'){drag.x1=mx;drag.y1=my;requestDraw();return;}
   if(drag.mode==='wallend'){
     const here=planLocal(S[review.i],mx,my);
     drag.wall[drag.end*2]=here[0]; drag.wall[drag.end*2+1]=here[1];
-    draw(); return;
+    requestDraw(); return;
   }
   if(drag.mode==='wallmove'||drag.mode==='walladd'){
     const here=planLocal(S[review.i],mx,my);
     if(drag.mode==='walladd') drag.b=here;
     else { const v=_wline({x1:drag.at[0],y1:drag.at[1],x2:drag.at[2],y2:drag.at[3]});
            drag.by=(here[0]-drag.start[0])*(-v.uy)+(here[1]-drag.start[1])*v.ux; }
-    draw(); return;
+    requestDraw(); return;
   }
   if(drag.mode==='mark'){
     // Screen up is height up; one metre of height is cam.s * cos(elevation) pixels tall.
     const perM=cam.s*Math.max(Math.cos(ele*D2R),0.05);
     S[review.i][drag.key]=+(drag.h0-(my-drag.y0)/perM).toFixed(3);
-    reviewRefreshBar(); draw(); return;
+    reviewRefreshBar(); requestDraw(); return;
   }
   if(drag.mode==='review'){
     const last=drag.pts[drag.pts.length-1], step=drag.tool==='brush'?Math.max(2,drag.r/3):3;
     if(Math.hypot(mx-last[0],my-last[1])>=step) drag.pts.push([mx,my]);
-    drag.x1=mx; drag.y1=my; draw(); return;
+    drag.x1=mx; drag.y1=my; requestDraw(); return;
   }
   if(drag.mode==='orbit'){
     azi=drag.a0+(mx-drag.x)*0.35;
@@ -3654,7 +3707,7 @@ addEventListener('mousemove',e=>{
       setPose(sc,{yaw:st.yaw+d, x:pivWorld[0]+ro[0], y:pivWorld[1]+ro[1]});
     });
   }
-  renderProps();draw();
+  renderProps();requestDraw();
 });
 addEventListener('mouseup',(e)=>{
   // A right-click that never dragged (<4 px) opens the context menu. Check before the drag is cleared: drag.x/drag.y
@@ -3789,12 +3842,17 @@ function zoomTo(targetScale,mx,my){
   const after=s2w(mx,my);
   cam.x+=before[0]-after[0];cam.y+=before[1]-after[1];
   if(level) cam.z=zUnder-(cv.height/2-my)/(cam.s*ce);
-  draw();
+  requestDraw();
 }
+// One wheel notch arrives as 100 pixels in Chrome and 6 lines in Firefox, and both scale with the system scroll
+// setting the same way, so dividing by these gives notches in either. A touchpad sends fractions of a notch.
+const WHEEL_NOTCH={0:100, 1:6, 2:1};
 cv.addEventListener('wheel',e=>{
   e.preventDefault();
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-  zoomTo(cam.s*(e.deltaY<0?1.1:0.91),mx,my);
+  // 10% per notch, by distance scrolled, so the same gesture zooms the same however the browser batches it.
+  const notches=Math.max(-10,Math.min(10,e.deltaY/(WHEEL_NOTCH[e.deltaMode]||100)));
+  zoomTo(cam.s*Math.pow(1.1,-notches),mx,my);
 },{passive:false});
 
 // ---- panels ----

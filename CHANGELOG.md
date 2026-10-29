@@ -3,6 +3,18 @@
 All notable changes, newest first. Versions follow `major.minor.patch`: a new minor version for new features, a
 patch for fixes. One line per change.
 
+## 0.55.4 (2026-10-29)
+
+- Zooming with a touchpad or a fast scroll wheel no longer lags in Firefox: the view redraws once per frame however
+  many scroll or mouse events arrive, instead of once per event.
+- The wheel zooms by how far you scroll, so the same scroll zooms the same amount in every browser, and a touchpad's
+  small steps zoom smoothly instead of 10% each.
+- Excluded-region markers draw two to three times faster.
+- The scan points take less graphics memory, and a frame that changes only the markers or outlines leaves the points
+  as they are.
+- On a laptop with two graphics chips, the page asks the browser for the faster one.
+- The real-scan regression pair now lives in its own repository; the README says how to clone it.
+
 ## 0.55.3 (2026-10-28)
 
 - A new regression test aligns two generated phone-style scans of a two-room venue (drift, noise, a door closed in one

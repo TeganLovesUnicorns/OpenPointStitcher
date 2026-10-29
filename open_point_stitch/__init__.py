@@ -12,4 +12,4 @@ Stages:
     6. merge        apply final poses, combine, export
 """
 
-__version__ = "0.55.3"
+__version__ = "0.55.4"
