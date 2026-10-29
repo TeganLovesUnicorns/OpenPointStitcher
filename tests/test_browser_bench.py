@@ -4346,7 +4346,9 @@ def test_a_site_measurement_is_clicked_on_two_walls_listed_and_saved(page):
           const len = w => Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
           const A = ws.reduce((x, w) => len(w) > len(x) ? w : x);
           const par = ws.filter(w => w !== A && Math.abs(w.n[0] * A.n[0] + w.n[1] * A.n[1]) > 0.999 && len(w) > 0.8);
-          const B = par.reduce((x, w) => Math.abs(w.off - A.off) > Math.abs(x.off - A.off) ? w : x);
+          // A parallel wall's normal may point the other way, which flips the sign of its offset: compare along A's.
+          const gap = w => Math.abs(Math.sign(w.n[0] * A.n[0] + w.n[1] * A.n[1]) * w.off - A.off);
+          const B = par.reduce((x, w) => gap(w) > gap(x) ? w : x);
           const pt = w => { const m = w.members.reduce((x, y) => Math.hypot(y.b[0]-y.a[0], y.b[1]-y.a[1]) > Math.hypot(x.b[0]-x.a[0], x.b[1]-x.a[1]) ? y : x);
                             const a = w2s(m.a), b = w2s(m.b); return [r.left + a[0] + (b[0] - a[0]) / 3, r.top + a[1] + (b[1] - a[1]) / 3]; };
           return [pt(A), pt(B)];
