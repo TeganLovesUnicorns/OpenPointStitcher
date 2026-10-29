@@ -1069,8 +1069,8 @@ def test_scan_list_matches_api(page):
 def test_fresh_load_preserves_saved_pose(page):
     """A scan with a saved pose must reload exactly where it was saved, not be spread out like a new import.
 
-    Plants the sample venue's 14-scan placement into this run's QA project, reloads, and compares every pose.
-    Needs PROJECT_DIR; skips without it."""
+    Plants the sample venue's saved poses into this run's QA project, reloads, and compares every pose. A project of
+    other scans gets the venue's poses in turn, one per scan. Needs PROJECT_DIR; skips without it."""
     if not PROJECT_DIR:
         print("    PROJECT_DIR not set, skipping (need filesystem access to plant the fixture placement)")
         return
@@ -1082,40 +1082,49 @@ def test_fresh_load_preserves_saved_pose(page):
     on_disk = [f[:-4] for f in os.listdir(raw_dir) if f.endswith(".pts")] if os.path.isdir(raw_dir) else []
     for s in fixture["scans"]:
         s["name"] = next((n for n in on_disk if n == s["name"] or n.endswith(" " + s["name"])), s["name"])
-    with open(os.path.join(PROJECT_DIR, "placement.json"), "w") as fh:
+    if not set(on_disk) & {s["name"] for s in fixture["scans"]}:   # not the venue's scans: lend its poses out
+        fixture["scans"] = [dict(s, name=n) for s, n in zip(fixture["scans"], sorted(on_disk))]
+    # Put back afterwards: on other scans the venue's poses would scatter them for every later test.
+    placement_path = os.path.join(PROJECT_DIR, "placement.json")
+    with open(placement_path, "rb") as fh:
+        original = fh.read()
+    with open(placement_path, "w") as fh:
         json.dump(fixture, fh)
-
-    _goto(page)
-    n_expected = len(fixture["scans"])
-    page.wait_for_function(
-        "(n) => Array.isArray(S) && S.filter(s => s.hasSavedPose).length === n",
-        arg=n_expected, timeout=LOAD_TIMEOUT_MS,
-    )
-
-    live = page.evaluate(
-        "() => Object.fromEntries(S.map(s => "
-        "[s.name, {x: s.x, y: s.y, yawDeg: s.yaw * 180 / Math.PI, z: s.dz}]))"
-    )
-
-    missing = [s["name"] for s in fixture["scans"] if s["name"] not in live]
-    assert not missing, f"fresh load lost {len(missing)} scan(s) that had a saved pose: {missing}"
-
-    worst = 0.0
-    for s in fixture["scans"]:
-        got = live[s["name"]]
-        dx, dy, dz = abs(got["x"] - s["x_m"]), abs(got["y"] - s["y_m"]), abs(got["z"] - s["z_m"])
-        dyaw = abs(((got["yawDeg"] - s["yaw_deg"]) + 180) % 360 - 180)
-        worst = max(worst, dx, dy, dz, dyaw)
-        assert dx < 1e-6 and dy < 1e-6 and dz < 1e-6, (
-            f"{s['name']}: fresh load moved a scan that already had a saved pose - "
-            f"x {got['x']!r} vs saved {s['x_m']!r}, y {got['y']!r} vs {s['y_m']!r}, "
-            f"z {got['z']!r} vs {s['z_m']!r}"
+    try:
+        _goto(page)
+        n_expected = len(fixture["scans"])
+        page.wait_for_function(
+            "(n) => Array.isArray(S) && S.filter(s => s.hasSavedPose).length === n",
+            arg=n_expected, timeout=LOAD_TIMEOUT_MS,
         )
-        assert dyaw < 1e-6, (
-            f"{s['name']}: yaw moved on fresh load - {got['yawDeg']!r} vs saved {s['yaw_deg']!r} deg"
+
+        live = page.evaluate(
+            "() => Object.fromEntries(S.map(s => "
+            "[s.name, {x: s.x, y: s.y, yawDeg: s.yaw * 180 / Math.PI, z: s.dz}]))"
         )
-    print(f"    all {n_expected} sample venue scans reloaded with their saved pose "
-          f"unchanged (largest deviation {worst:.2e})")
+
+        missing = [s["name"] for s in fixture["scans"] if s["name"] not in live]
+        assert not missing, f"fresh load lost {len(missing)} scan(s) that had a saved pose: {missing}"
+
+        worst = 0.0
+        for s in fixture["scans"]:
+            got = live[s["name"]]
+            dx, dy, dz = abs(got["x"] - s["x_m"]), abs(got["y"] - s["y_m"]), abs(got["z"] - s["z_m"])
+            dyaw = abs(((got["yawDeg"] - s["yaw_deg"]) + 180) % 360 - 180)
+            worst = max(worst, dx, dy, dz, dyaw)
+            assert dx < 1e-6 and dy < 1e-6 and dz < 1e-6, (
+                f"{s['name']}: fresh load moved a scan that already had a saved pose - "
+                f"x {got['x']!r} vs saved {s['x_m']!r}, y {got['y']!r} vs {s['y_m']!r}, "
+                f"z {got['z']!r} vs {s['z_m']!r}"
+            )
+            assert dyaw < 1e-6, (
+                f"{s['name']}: yaw moved on fresh load - {got['yawDeg']!r} vs saved {s['yaw_deg']!r} deg"
+            )
+        print(f"    all {n_expected} scans reloaded with their saved pose "
+              f"unchanged (largest deviation {worst:.2e})")
+    finally:
+        with open(placement_path, "wb") as fh:
+            fh.write(original)
 
 
 def test_webgl_renderer(page):
@@ -2946,7 +2955,9 @@ def test_an_exclude_box_started_on_the_spin_handle_is_a_box_not_a_spin(page):
     g = page.evaluate("() => { const g = gizmoAt(S[sel]); return {kx: g.kx, ky: g.ky, cx: g.c[0], cy: g.c[1], yaw: S[sel].yaw}; }")
     rect = _canvas_rect(page)
     sx, sy = _to_viewport(rect, (g["kx"], g["ky"]))
-    ex, ey = _to_viewport(rect, (g["cx"], g["cy"]))
+    # To beside the centre, not onto it: at yaw 0 the handle is straight above the centre, and a box with no width
+    # is a click.
+    ex, ey = _to_viewport(rect, (g["cx"] + 30, g["cy"]))
     page.mouse.move(sx, sy)
     page.mouse.down()
     page.mouse.move(ex, ey, steps=6)
@@ -4234,7 +4245,9 @@ def test_review_opens_in_true_colour_and_turning_it_off_there_makes_the_scan_one
     rows.nth(0).click(); rows.nth(1).click(modifiers=["Control"])
     page.locator('[data-view="plan"]').click()
     page.locator("#sbReviewSelected").click()
-    page.evaluate("() => { $('cbGrid').checked = false; draw(); }")
+    # Big points, so a sparse scan covers the view the way a dense one does, rather than a speckle of soft-edged dots
+    # whose edges blend into many colours.
+    page.evaluate("() => { $('cbGrid').checked = false; $('pointSize').value = 40; draw(); }")
     assert page.evaluate("() => $('cbCol').checked"), "review did not open in True colour"
     first = page.evaluate("() => review.i")
     mixed, n_true = _point_colour_sameness(page)
