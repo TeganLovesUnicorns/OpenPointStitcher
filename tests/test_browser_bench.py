@@ -2082,9 +2082,11 @@ def test_clip_bounded_region_works_outside_plan_view(page):
     assert page.evaluate("() => clipAxisActive('z')"), "Z clip did not turn on"
     assert page.evaluate("() => view") == "iso", "clipping must not have changed the camera view"
 
+    # Over the middle half of those points: a band as wide as the room reaches under the slice sliders at the edges.
     rect = _canvas_rect(page)
-    x0, y0 = _to_viewport(rect, (box["x0"] - 6, box["y0"] - 6))
-    x1, y1 = _to_viewport(rect, (box["x1"] + 6, box["y1"] + 6))
+    qx, qy = (box["x1"] - box["x0"]) / 4, (box["y1"] - box["y0"]) / 4
+    x0, y0 = _to_viewport(rect, (box["x0"] + qx, box["y0"] + qy))
+    x1, y1 = _to_viewport(rect, (box["x1"] - qx, box["y1"] - qy))
     page.mouse.move(x0, y0)
     page.mouse.down()
     page.mouse.move(x1, y1, steps=6)
