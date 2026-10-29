@@ -589,6 +589,268 @@ def test_tidying_saved_versions_never_touches_the_log():
     print("    the tidy-up of saved versions leaves hand-moves.jsonl and its .old file alone, even if handed them")
 
 
+# --- removing a scan from a project, and putting it back ------------------------------------------------------------
+
+
+def _member(scan):
+    return {"scan": scan, "points": [], "centroid": [0.0, 0.0, 1.0], "extent": [0.1, 0.1, 0.1], "n_points": 1}
+
+
+def _placement_naming_a():
+    """A placement where scan "a" appears in every place a scan name can."""
+    return {
+        "schema": "open_point_stitch.placement.v1",
+        "scans": [{"name": n, "x_m": i, "y_m": 0.0, "yaw_deg": 0.0, "reprocessed_with": ["ex-" + n]}
+                  for i, n in enumerate("abc")],
+        "anchors": [{"id": "ab", "label": "", "members": [_member("a"), _member("b")]},
+                    {"id": "abc", "label": "door", "members": [_member("a"), _member("b"), _member("c")]},
+                    {"id": "bc", "label": "", "members": [_member("b"), _member("c")]}],
+        "exclusions": [{"id": "ex-a", "scan": "a", "centroid": [0, 0, 0]}, {"id": "ex-b", "scan": "b", "centroid": [0, 0, 0]}],
+        "stairs": [{"id": "st-a", "scan": "a"}],
+        "landmarks": [{"id": "lm-a", "scan": "a", "name": "boiler"}],
+        "labels": [{"id": "lb-a", "scan": "a", "cls": "wall"}],
+        "measurements": [{"id": "m-ab", "a": {"scan": "a"}, "b": {"scan": "b"}, "site_m": 3.0},
+                         {"id": "m-bc", "a": {"scan": "b"}, "b": {"scan": "c"}, "site_m": 2.0}],
+        "excluded_pairs": [["a", "c"], ["b", "c"]],
+        "pins": [{"a": "a", "a_xy": [0, 0], "b": "b", "b_xy": [1, 1]}],
+        "as_imported": {n: {"x_m": 0.0} for n in "abc"},
+        "reference_scan": "a",
+        "last_align_pairs": [{"source_name": "a", "target_name": "b"}, {"source_name": "b", "target_name": "c"}],
+        "settings": {"gpu": True},
+    }
+
+
+def _sorted_view(data):
+    """The placement with every list in a fixed order, so a round trip can be compared whatever order it re-adds in."""
+    key = lambda e: json.dumps(e, sort_keys=True)  # noqa: E731
+    out = {}
+    for k, v in data.items():
+        if isinstance(v, list):
+            v = sorted(({**e, "members": sorted(e["members"], key=key)} if isinstance(e, dict) and "members" in e else
+                        sorted(e) if isinstance(e, list) else e for e in v), key=key)
+        out[k] = v
+    return out
+
+
+def test_taking_a_scan_out_removes_every_mention_and_keeps_links_that_still_join_two():
+    data = _placement_naming_a()
+    removed = pj.take_scan_out(data, "a")
+    assert [s["name"] for s in data["scans"]] == ["b", "c"]
+    assert {a["id"]: [m["scan"] for m in a["members"]] for a in data["anchors"]} == {"abc": ["b", "c"], "bc": ["b", "c"]}
+    for key in ("exclusions", "stairs", "landmarks", "labels"):
+        assert all(e["scan"] != "a" for e in data[key]), key
+    assert [m["id"] for m in data["measurements"]] == ["m-bc"]
+    assert data["excluded_pairs"] == [["b", "c"]] and data["pins"] == []
+    assert "a" not in data["as_imported"] and "reference_scan" not in data
+    assert data["last_align_pairs"] == [{"source_name": "b", "target_name": "c"}]
+    assert data["settings"] == {"gpu": True}
+    assert pj.describe_removal(removed) == {
+        "placed": True, "links": 2, "links_dropped": 1, "exclusions": 1, "stairs": 1, "landmarks": 1, "labels": 1,
+        "measurements": 1, "excluded_pairs": 1, "reference": True}
+
+
+def test_putting_a_scan_back_restores_what_came_out_except_the_last_runs_pair_table():
+    original = _placement_naming_a()
+    data = _placement_naming_a()
+    removed = pj.take_scan_out(data, "a")
+    pj.put_scan_back(data, "a", json.loads(json.dumps(removed)), present={"a", "b", "c"})
+    original["last_align_pairs"] = [{"source_name": "b", "target_name": "c"}]     # a run record, not put back
+    assert _sorted_view(data) == _sorted_view(original)
+
+
+def test_putting_back_skips_links_and_measurements_to_a_scan_that_has_gone_since():
+    data = _placement_naming_a()
+    removed = pj.take_scan_out(data, "a")
+    pj.take_scan_out(data, "b")
+    pj.put_scan_back(data, "a", removed, present={"a", "c"})
+    assert {a["id"]: sorted(m["scan"] for m in a["members"]) for a in data["anchors"]} == {"abc": ["a", "c"]}
+    assert data["measurements"] == [] and data["excluded_pairs"] == [["a", "c"]] and data["pins"] == []
+    assert data["reference_scan"] == "a"
+
+
+def test_a_removed_scan_file_is_moved_never_deleted_and_comes_back_under_its_own_name():
+    with tempfile.TemporaryDirectory() as root:
+        pdir = pj.create_project(root, "p")
+        raw = pj.scans_raw_dir(pdir)
+        _make_pts(os.path.join(raw, "kitchen.pts"), n=4)
+        with open(os.path.join(raw, "kitchen.pts"), "rb") as fh:
+            body = fh.read()
+        for bad in ("../kitchen", "kitchen.pts", "nope", ""):
+            try:
+                pj.move_scan_out(pdir, bad)
+                raise AssertionError(f"{bad!r} was taken out")
+            except KeyError:
+                pass
+        src, dest = pj.move_scan_out(pdir, "kitchen")
+        assert not os.path.exists(src) and os.path.dirname(dest) == pj.removed_scans_dir(pdir)
+        pj.write_removal_note(dest, "kitchen", "kitchen.pts", {"scans": [{"name": "kitchen"}]}, None)
+        # The same name removed a second time sits beside the first, never over it.
+        _make_pts(os.path.join(raw, "kitchen.pts"), n=2)
+        _src2, dest2 = pj.move_scan_out(pdir, "kitchen")
+        assert os.path.basename(dest2) == "kitchen (2).pts"
+        pj.write_removal_note(dest2, "kitchen", "kitchen.pts", {}, None)
+        listed = pj.list_removed_scans(pdir)
+        assert {r["file"] for r in listed} == {"kitchen.pts", "kitchen (2).pts"}
+        assert {r["name"] for r in listed} == {"kitchen"}
+        for bad in ("../scans-raw/x.pts", "kitchen.pts.json", "missing.pts"):
+            try:
+                pj.move_scan_back(pdir, bad)
+                raise AssertionError(f"{bad!r} was put back")
+            except KeyError:
+                pass
+        name, removed, note = pj.move_scan_back(pdir, "kitchen.pts")
+        assert name == "kitchen" and removed == {"scans": [{"name": "kitchen"}]}
+        with open(os.path.join(raw, "kitchen.pts"), "rb") as fh:
+            assert fh.read() == body
+        # The second copy cannot come back while one called kitchen is in the project.
+        try:
+            pj.move_scan_back(pdir, "kitchen (2).pts")
+            raise AssertionError("put back over a scan already there")
+        except pj.DuplicateScan:
+            pass
+        assert [r["taken"] for r in pj.list_removed_scans(pdir)] == [True]
+
+
+def _project_with_two_scans(root):
+    pdir = pj.create_project(root, "p")
+    for n in "ab":
+        _make_pts(os.path.join(pj.scans_raw_dir(pdir), n + ".pts"), n=4)
+    data = _placement_naming_a()
+    data["scans"] = [s for s in data["scans"] if s["name"] != "c"]
+    for key in ("anchors", "measurements", "excluded_pairs", "last_align_pairs"):
+        data[key] = []
+    data["anchors"] = [{"id": "ab", "label": "", "members": [_member("a"), _member("b")]}]
+    with open(pj.project_file_path(pdir), "w") as fh:
+        json.dump(data, fh)
+    return pdir
+
+
+def test_removing_a_scan_from_the_open_project_saves_a_version_first_and_restoring_undoes_it():
+    from open_point_stitch.server import Session
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
+        pdir = _project_with_two_scans(root)
+        with open(pj.project_file_path(pdir)) as fh:
+            before = json.load(fh)
+        s = Session(root, root, root)
+        try:
+            s.open_project("p")
+            s.app.wait_for_all()
+            dry = s.remove_scan("a", dry_run=True)
+            assert dry["n_left"] == 1 and dry["summary"]["links"] == 1
+            assert os.path.exists(os.path.join(pj.scans_raw_dir(pdir), "a.pts")), "a dry run moved the file"
+            try:
+                s.remove_scan("nope")
+                raise AssertionError("an unknown scan was removed")
+            except KeyError:
+                pass
+            got = s.remove_scan("a")
+            assert got["n_left"] == 1 and got["summary"]["links_dropped"] == 1
+            assert sorted(os.listdir(pj.removed_scans_dir(pdir))) == ["a.pts", "a.pts.json"]
+            with open(pj.project_file_path(pdir)) as fh:
+                after = json.load(fh)
+            assert [x["name"] for x in after["scans"]] == ["b"] and after["anchors"] == []
+            # The version saved just before holds the scan, and the note names it, so a tidy keeps it.
+            with open(os.path.join(pj.backups_dir(pdir), got["saved_version"])) as fh:
+                assert [x["name"] for x in json.load(fh)["scans"]] == ["a", "b"]
+            assert got["saved_version"] in pj.referenced_ids(pdir, golden_dir=root)
+            s.open_project("p")                                    # what the page does next
+            s.app.wait_for_all()
+            assert [m["name"] for m in s.app.scan_meta] == ["b"]
+            s.restore_scan("p", "a.pts")
+            assert os.listdir(pj.removed_scans_dir(pdir)) == []
+            with open(pj.project_file_path(pdir)) as fh:
+                back = json.load(fh)
+            for key in ("scans", "anchors", "exclusions", "as_imported", "reference_scan"):
+                assert _sorted_view({key: back[key]}) == _sorted_view({key: before[key]}), key
+        finally:
+            if s.app is not None:
+                s.app.wait_for_all()
+                s.app.shutdown()
+
+
+def test_removing_is_refused_while_a_job_runs_and_the_last_scan_closes_the_project():
+    from open_point_stitch.server import Session
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
+        pdir = _project_with_two_scans(root)
+        s = Session(root, root, root)
+        try:
+            s.open_project("p")
+            s.app.wait_for_all()
+            app = s.app
+            app.jobs.any_running = lambda: True
+            for attempt in (lambda: s.remove_scan("a"), lambda: s.restore_scan("p", "a.pts")):
+                try:
+                    attempt()
+                    raise AssertionError("not refused while a job runs")
+                except RuntimeError:
+                    pass
+            assert sorted(os.listdir(pj.scans_raw_dir(pdir))) == ["a.pts", "b.pts"]
+            app.jobs.any_running = lambda: False
+            s.remove_scan("a")
+            s.remove_scan("b")
+            assert s.app is None and s.active_project is None
+            app.wait_for_all()
+            assert pj.list_projects(root)[0]["n_scans_raw"] == 0
+            try:
+                s.open_project("p")
+                raise AssertionError("an emptied project opened")
+            except FileNotFoundError:
+                pass
+            s.restore_scan("p", "b.pts")                          # works with the project closed
+            s.open_project("p")
+            s.app.wait_for_all()
+            assert [m["name"] for m in s.app.scan_meta] == ["b"]
+        finally:
+            if s.app is not None:
+                s.app.wait_for_all()
+                s.app.shutdown()
+
+
+def test_the_remove_and_restore_routes():
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    from open_point_stitch.server import Session, make_handler
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
+        pdir = _project_with_two_scans(root)
+        s = Session(root, root, root)
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(s))
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+
+        def call(path, body=None):
+            req = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(),
+                                         method="GET" if body is None else "POST")
+            try:
+                with urllib.request.urlopen(req) as r:
+                    return r.status, json.load(r)
+            except urllib.error.HTTPError as exc:
+                return exc.code, json.load(exc)
+        try:
+            assert call("/api/scans/a/remove", {})[0] == 409            # nothing open
+            assert call("/api/projects/p/open", {})[0] == 200
+            s.app.wait_for_all()
+            assert call("/api/scans/nope/remove", {})[0] == 404
+            code, got = call("/api/scans/a/remove", {"dry_run": True})
+            assert code == 200 and got["dry_run"] and got["summary"]["placed"]
+            code, got = call("/api/scans/a/remove", {})
+            assert code == 200 and got["removed_file"] == "a.pts" and got["n_left"] == 1
+            code, got = call("/api/projects/p/removed-scans")
+            assert code == 200 and [r["name"] for r in got["removed"]] == ["a"]
+            assert call("/api/projects/p/removed-scans/..%2Fscans-raw%2Fb.pts/restore", {})[0] == 404
+            assert call("/api/projects/nope/removed-scans/a.pts/restore", {})[0] == 404
+            code, got = call("/api/projects/p/removed-scans/a.pts/restore", {})
+            assert code == 200 and got["name"] == "a"
+            assert call("/api/projects/p/removed-scans")[1]["removed"] == []
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            if s.app is not None:
+                s.app.wait_for_all()
+                s.app.shutdown()
+
+
 if __name__ == "__main__":
     from support import run_tests
     raise SystemExit(run_tests(globals()))

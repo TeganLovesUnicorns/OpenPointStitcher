@@ -90,6 +90,13 @@ memory=24GB
 
 None of these are tracked by git. Set `SCANS`, `PROJECTS` or `OUT` to use other locations.
 
+To take a scan out of a project, right-click it in the bench and choose **Remove from project**. Nothing is
+deleted: its file moves from the project's `scans-raw/` folder to `removed-scans/`, next to a small `.json` note of
+everything the placement said about it (its position, links, exclusions, landmarks, measurements). The placement is
+saved as a version first, as with any save. File > Import scans lists removed scans with a **Put back** button that
+brings the file and all of that back. Removing the last scan closes the project and opens the import pane. Removing
+and putting back both wait until a running job has finished.
+
 ## Sample data
 
 A sample project (a wedding venue, 14 scans) will be published as a separate download on the

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
+import copy
 import functools
 import dataclasses
 import datetime
@@ -2080,6 +2081,65 @@ class Session:
             old_app.shutdown()
         self._stamp_opened(pdir, name)
 
+    def remove_scan(self, scan: str, dry_run: bool = False) -> dict:
+        """Take one scan out of the open project: its file moves to removed-scans/ (never deleted) and everything
+        placement.json says about it comes out in a saved version, noted beside the file so restore_scan can put
+        it back. dry_run only says what would come out. Refuses while a job runs. The page re-opens the project
+        afterwards; removing the last scan closes it, since an empty project cannot be open."""
+        with self._lock:
+            app = self.app
+            if app is None:
+                raise LookupError("no project open")
+            if app.jobs.any_running():
+                raise RuntimeError("a run is in progress; remove this scan when it has finished")
+            pdir = app.out_dir
+            if project_mod.find_scan_file(pdir, scan) is None:
+                raise KeyError(scan)
+            saved = _read_placement(pdir)
+            if dry_run:
+                removed = project_mod.take_scan_out(copy.deepcopy(saved or {}), scan)
+                return {"name": scan, "dry_run": True, "n_left": len(project_mod.scan_names(pdir)) - 1,
+                        "summary": project_mod.describe_removal(removed)}
+            src, dest = project_mod.move_scan_out(pdir, scan)
+            removed: dict = {}
+            try:
+                if saved is not None:
+                    _write_placement_merged(pdir, lambda fresh: removed.update(project_mod.take_scan_out(fresh, scan)))
+            except BaseException:
+                os.replace(dest, src)                  # the placement is unchanged, so the file goes back too
+                raise
+            newest = _list_backups(pdir)[:1]           # the version saved just before this write
+            saved_version = newest[0]["id"] if newest and removed else None
+            project_mod.write_removal_note(dest, scan, os.path.basename(src), removed, saved_version)
+            n_left = len(project_mod.scan_names(pdir))
+            old_app = None
+            if n_left == 0:
+                old_app, self.app, self.active_project = app, None, None
+        if old_app is not None:
+            old_app.shutdown()
+        log.info("removed scan %s from %s into %s (saved version %s)", scan, pdir, dest, saved_version)
+        return {"name": scan, "removed_file": os.path.basename(dest), "n_left": n_left,
+                "saved_version": saved_version, "summary": project_mod.describe_removal(removed),
+                "folder": project_mod.REMOVED_SCANS_DIRNAME}
+
+    def restore_scan(self, project: str, removed_file: str) -> dict:
+        """Put a removed scan back into scans-raw/ and what its note holds back into placement.json. The project
+        need not be open (an emptied project is not); when it is, the page re-opens it to load the scan."""
+        pdir = project_mod.project_dir(self.projects_root, project)
+        if not os.path.isdir(project_mod.scans_raw_dir(pdir)):
+            raise FileNotFoundError(f"no project named {project!r}")
+        with self._lock:
+            if self.app is not None and self.active_project == project and self.app.jobs.any_running():
+                raise RuntimeError("a run is in progress; put this scan back when it has finished")
+            name, removed, note_path = project_mod.move_scan_back(pdir, removed_file)
+            if removed and os.path.exists(_placement_path(pdir)):
+                present = project_mod.scan_names(pdir)
+                _write_placement_merged(pdir, lambda fresh: project_mod.put_scan_back(fresh, name, removed, present))
+            if os.path.exists(note_path):
+                os.remove(note_path)
+        log.info("put scan %s back into %s", name, pdir)
+        return {"name": name, "restored": True, "summary": project_mod.describe_removal(removed)}
+
     @staticmethod
     def _stamp_opened(pdir: str, name: str) -> None:
         """Merge-write an open-time stamp; a failure here must not fail the open. Only the stamp changes, so no saved
@@ -2167,6 +2227,14 @@ def make_handler(session: Session):
                     self._reply(200, body, "image/png")
                 elif path == "/api/import-source":
                     self._json(200, {"scans": project_mod.list_import_source(session.import_source)})
+                elif path.startswith("/api/projects/") and path.endswith("/removed-scans"):
+                    name = urllib.parse.unquote(path[len("/api/projects/"):-len("/removed-scans")])
+                    pdir = project_mod.project_dir(session.projects_root, name)
+                    if not os.path.isdir(pdir):
+                        self._json(404, {"error": f"no project named {name!r}"})
+                        return
+                    self._json(200, {"removed": project_mod.list_removed_scans(pdir),
+                                     "folder": project_mod.REMOVED_SCANS_DIRNAME})
                 elif path == "/api/scans":
                     app = self._open_app()
                     if app is None:
@@ -2333,6 +2401,35 @@ def make_handler(session: Session):
                         self._json(200, app.reprocess(name))
                     except KeyError:
                         self._json(404, {"error": f"no scan named {name!r} in this project"})
+                elif path.startswith("/api/scans/") and path.endswith("/remove"):
+                    # Take a scan out of the open project; {"dry_run": true} only says what would come out with it.
+                    if self._open_app() is None:
+                        return
+                    name = urllib.parse.unquote(path[len("/api/scans/"):-len("/remove")])
+                    try:
+                        self._json(200, session.remove_scan(name, dry_run=bool(self._body().get("dry_run"))))
+                    except LookupError as exc:
+                        if isinstance(exc, KeyError):
+                            self._json(404, {"error": f"no scan named {name!r} in this project"})
+                        else:
+                            self._json(409, {"error": str(exc)})
+                    except RuntimeError as exc:
+                        self._json(409, {"error": str(exc)})
+                elif path.startswith("/api/projects/") and "/removed-scans/" in path and path.endswith("/restore"):
+                    name, _, removed_file = path[len("/api/projects/"):-len("/restore")].partition("/removed-scans/")
+                    name, removed_file = urllib.parse.unquote(name), urllib.parse.unquote(removed_file)
+                    try:
+                        self._json(200, session.restore_scan(name, removed_file))
+                    except project_mod.InvalidProjectName as exc:
+                        self._json(400, {"error": str(exc)})
+                    except project_mod.DuplicateScan as exc:
+                        self._json(409, {"error": f"{exc}; rename or remove that one first", "duplicate": True})
+                    except FileNotFoundError as exc:
+                        self._json(404, {"error": str(exc)})
+                    except KeyError:
+                        self._json(404, {"error": f"no removed scan {removed_file!r} in project {name!r}"})
+                    except RuntimeError as exc:
+                        self._json(409, {"error": str(exc)})
                 elif path.startswith("/api/scans/") and path.endswith("/rebuild"):
                     # Rebuild one scan's preview with the project's current settings (its levelling switch).
                     app = self._open_app()

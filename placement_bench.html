@@ -447,6 +447,11 @@ textarea{display:none}
       <div class="mini" style="margin:8px 0 4px">Or pick from the scans folder the tool was started with:</div>
       <div class="importList" id="gateImportList"></div>
     </div>
+    <div id="importRemovedPart" style="display:none">
+      <div class="mini" style="margin:8px 0 4px">Removed from this project earlier (kept in its removed-scans
+        folder). Putting one back brings its placement, links and exclusions back too:</div>
+      <div class="importList" id="importRemovedList"></div>
+    </div>
     <div id="importError" class="gateErr" style="display:none"></div>
     <div class="startOverlayBtns">
       <button class="act" id="gateImportGo">Import selected &amp; open</button>
@@ -4324,7 +4329,53 @@ function openScanContextMenu(i,clientX,clientY){
   actions.push({label:'Revert to as imported', run:revertSelectionToAsImported, disabled:viewAsImported||!anyNotAsImported});
   actions.push(null);
   actions.push({label:'Remove from view', run:()=>$('mBatchRemove').click()});
+  if(single) actions.push({label:'Remove from project…', run:()=>removeScanFromProject(i), disabled:viewAsImported});
   _renderContextMenu(actions,clientX,clientY);
+}
+// Take one scan out of the project. The server moves its file to removed-scans/ (never deleted) and takes what the
+// placement says about it out in a saved version; File > Import scans lists it and puts it all back.
+function _describeRemoval(sm){
+  const parts=[];
+  if(sm.placed) parts.push('its placement');
+  if(sm.links) parts.push(`${sm.links} link(s)`+(sm.links_dropped?`, ${sm.links_dropped} of them left with one scan and so dropped`:''));
+  for(const [k,label] of [['exclusions','exclusion region(s)'],['stairs','marked stairs'],['landmarks','named landmark(s)'],
+                          ['labels','label(s)'],['measurements','site measurement(s)'],['excluded_pairs','excluded pair(s)']])
+    if(sm[k]) parts.push(`${sm[k]} ${label}`);
+  if(sm.reference) parts.push('its place as the reference scan');
+  return parts.length?'Also taken out with it: '+parts.join('; ')+'.':'Nothing else in the project refers to it.';
+}
+async function removeScanFromProject(i){
+  const s=S[i]; if(!s)return;
+  const project=new URLSearchParams(location.search).get('project');
+  if(!project){ setStatus('Removing a scan needs a project open from the project list.'); return; }
+  const url='/api/scans/'+encodeURIComponent(s.name)+'/remove';
+  const post=body=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  let r, j;
+  try{ r=await post({dry_run:true}); j=await r.json().catch(()=>({})); }
+  catch(e){ appendStatus('could not reach the server'); return; }
+  if(!r.ok){ appendStatus(j.error||`could not remove ${shownScan(s.name)}`); return; }
+  if(!confirm(`Remove "${shownScan(s.name)}" from this project?\n\n`
+      +`Its file moves to the project's removed-scans folder; nothing is deleted. ${_describeRemoval(j.summary||{})}\n\n`
+      +`File > Import scans lists removed scans and puts one back with all of that.`
+      +(j.n_left===0?'\n\nIt is the last scan, so the project closes and the import pane opens to add scans.':'')
+      +(placementDirty?'\n\nYour unsaved changes are saved first.':'')))return;
+  try{
+    if(placementDirty) await savePlacement();
+    r=await post({}); j=await r.json().catch(()=>({}));
+  }catch(e){ appendStatus('could not remove the scan: '+(e.message||e)); return; }
+  if(!r.ok){ appendStatus(j.error||`could not remove ${shownScan(s.name)}`); return; }
+  markPlacementSaved();                     // the server changed the file; nothing here is unsaved work
+  if(j.n_left===0){ gateOpenImportPane(project,'new'); return; }
+  // Re-open so the project loads without it; refused (a run started meanwhile) it says so and stays.
+  try{ r=await fetch('/api/projects/'+encodeURIComponent(project)+'/open',{method:'POST'}); }
+  catch(e){ r=null; }
+  if(!r||!r.ok){
+    const e=r?await r.json().catch(()=>({})):{};
+    appendStatus(`${shownScan(s.name)} is out of the project (in ${j.folder||'removed-scans'}/), but it could not reload: `
+      +(e.error||'could not reach the server')+'. Reload the page once it is free.');
+    return;
+  }
+  location.reload();
 }
 // Right-clicking empty space gives the view-level items.
 function openEmptySpaceContextMenu(clientX,clientY){
@@ -5647,6 +5698,46 @@ async function gateOpenImportPane(name, mode='new'){
   $('newProjectOverlay').style.display='none';
   importRefreshGo();
   $('gateImportPane').style.display='flex';
+  importLoadRemoved(name);
+}
+// Scans taken out with "Remove from project", each with a button to put it back. A put-back scan counts as an
+// import, so Go and Cancel reload the project to show it.
+async function importLoadRemoved(name){
+  $('importRemovedPart').style.display='none';
+  let data;
+  try{ data=await (await fetch('/api/projects/'+encodeURIComponent(name)+'/removed-scans')).json(); }catch(e){ return; }
+  const rows=(data&&data.removed)||[];
+  if(!rows.length||name!==pendingImportProject)return;
+  const box=$('importRemovedList');
+  box.innerHTML='';
+  for(const r of rows){
+    const row=document.createElement('div');
+    row.className='importRow';
+    row.innerHTML=`<span class="nm" title="${escHtml(r.file)}">${escHtml(r.name)}</span>
+      <span class="mini">${r.removed_at?'removed '+escHtml(_fmtWhen(r.removed_at)):''}</span><span class="st"></span>`;
+    const st=row.querySelector('.st');
+    if(r.taken){ st.textContent='a scan with this name is in the project again'; box.appendChild(row); continue; }
+    const back=document.createElement('button'); back.type='button'; back.textContent='Put back';
+    back.onclick=async ()=>{
+      back.disabled=true;
+      let resp, j={};
+      try{
+        resp=await fetch('/api/projects/'+encodeURIComponent(name)+'/removed-scans/'+encodeURIComponent(r.file)+'/restore',
+                         {method:'POST'});
+        j=await resp.json().catch(()=>({}));
+      }catch(e){ resp=null; }
+      if(!resp||!resp.ok){
+        row.classList.add('bad'); back.disabled=false;
+        st.prepend((resp?j.error||`failed (${resp.status})`:'could not reach the server')+' ');
+        return;
+      }
+      back.remove(); row.classList.add('ok'); st.textContent='back in the project'; importUploaded++;
+      importRefreshGo();
+    };
+    st.appendChild(back);
+    box.appendChild(row);
+  }
+  $('importRemovedPart').style.display='block';
 }
 function importAddFiles(files){
   const box=$('importUploads');
@@ -5762,6 +5853,10 @@ async function importReopen(){
 $('gateImportCancel').onclick=()=>{
   // Files already copied in stay in the project; an open project reloads so they show.
   if(importMode==='add' && importUploaded){ importReopen(); return; }
+  // Its last scan was just removed, so the project is closed under this page: back to the project list.
+  if(importMode==='new' && new URLSearchParams(location.search).get('project')===pendingImportProject){
+    location.href=location.pathname; return;
+  }
   $('gateImportPane').style.display='none';
   pendingImportProject=null;
   if(importMode==='new') gateLoadProjects();   // a project just created shows in the list straight away
