@@ -186,16 +186,64 @@ def wait_for_all_scans_ready(base_url: str, timeout_s: float) -> tuple[float, in
     )
 
 
+# The browser layer runs on generated scans (tests/synthetic_apartment.py), the same on every machine, so it needs no
+# real scans. Bump the version when the scan set changes: a new folder means no project or cache from the old set.
+BROWSER_SET = "browser-v4"
+
+
+def _apartment():
+    if os.path.join(HERE, "tests") not in sys.path:
+        sys.path[:0] = [HERE, os.path.join(HERE, "tests")]
+    import synthetic_apartment
+    return synthetic_apartment
+
+
+def place_where_they_belong(placement: dict) -> None:
+    """Every generated scan's pose set to where it really is in the venue, as a placed project's would be. Solved
+    from the scan's known frame through the bench's own levelling, so the flat's floor lands at height 0."""
+    import numpy as np
+    walks = _apartment().QA_WALKS   # first: it puts the app on the path
+    from open_point_stitch.lib.poses import levelled_points, solve_yaw_translation
+
+    g = np.linspace(0.0, 10.0, 6)
+    venue = np.array([[x, y, z] for x in g for y in g for z in (0.0, 1.5, 3.0)])
+    for s in placement["scans"]:
+        frame = walks[s["name"]][1]                                  # venue -> the scan's raw frame
+        raw = venue @ frame[:3, :3].T + frame[:3, 3]
+        local = levelled_points(raw, s["level_rotation"], s.get("floor_z_local_m"))
+        yaw, t = solve_yaw_translation(local, venue)
+        for prefix in ("", "human_"):   # rounded as the page saves them, or its first save would move every scan
+            s.update({prefix + "yaw_deg": round(yaw, 3), prefix + "x_m": round(float(t[0]), 4),
+                      prefix + "y_m": round(float(t[1]), 4), prefix + "z_m": round(float(t[2]), 4)})
+
+
+def browser_scans(args) -> str:
+    """The generated QA scans under <out>, written once and kept: the same seed gives the same files, so later runs
+    reuse them and their warm preview cache."""
+    folder = os.path.join(args.out, BROWSER_SET, "scans")
+    if not any(f.endswith(".pts") for f in (os.listdir(folder) if os.path.isdir(folder) else [])):
+        apartment = _apartment()
+        t0 = time.time()
+        tmp = folder + ".part"
+        shutil.rmtree(tmp, ignore_errors=True)
+        apartment.write_qa_set(tmp)
+        shutil.rmtree(folder, ignore_errors=True)
+        os.replace(tmp, folder)
+        print(f"generated the browser QA scans in {time.time() - t0:.1f}s: {', '.join(sorted(os.listdir(folder)))}",
+              flush=True)
+    return folder
+
+
 def shard_projects_root(args, k: int) -> str:
-    """Shard 1 uses the QA projects folder; each other shard its own folder under <out>, so nothing a bench keeps
-    about "the last project" is shared between benches."""
-    return args.projects if k == 0 else os.path.join(args.out, f"browser-lane-{k + 1}")
+    """Each shard its own projects folder, so nothing a bench keeps about "the last project" is shared between
+    benches."""
+    return os.path.join(args.out, BROWSER_SET, f"lane-{k + 1}")
 
 
 def seed_shard_project(args, root: str) -> None:
     """A later shard's copy starts warm with the first shard's preview cache. The cache is keyed on each scan's own
     size and time, so a stale entry is rebuilt rather than served. Scans are imported by the server as usual."""
-    src = os.path.join(args.projects, QA_PROJECT_NAME, ".bench_cache")
+    src = os.path.join(shard_projects_root(args, 0), QA_PROJECT_NAME, ".bench_cache")
     dst = os.path.join(root, QA_PROJECT_NAME, ".bench_cache")
     if os.path.isdir(src) and not os.path.isdir(dst):
         shutil.copytree(src, dst)
@@ -209,18 +257,63 @@ def declared_browser_tests(only: str, skip: str) -> list[str]:
     return [n for n in names if (not only_set or n in only_set) and n not in skip_set]
 
 
+def start_bench(args, root: str, port: int, log_path: str):
+    """A bench on the generated scans with root as its projects folder. Returns (process, its log file)."""
+    bench_env = dict(os.environ, BENCH_PREVIEW_BUILD_WORKERS="4")
+    # Server output goes to a file, never an unread pipe, which would fill and hang the server.
+    log_fh = open(log_path, "w", encoding="utf-8")
+    bench = subprocess.Popen([sys.executable, "-m", "open_point_stitch.server", "--scans", browser_scans(args),
+                              "--out", args.out, "--projects", root, "--port", str(port)],
+                             cwd=HERE, stdout=log_fh, stderr=subprocess.STDOUT, text=True, env=bench_env)
+    return bench, log_fh
+
+
+def save_start_layout(args, start: str) -> None:
+    """The first run on a new scan set imports it once, saves the page's own layout of it and puts every scan where it
+    belongs, so every test starts from a placed project, as a real one is. Kept at start, reused after."""
+    from playwright.sync_api import sync_playwright
+
+    root = os.path.join(args.out, BROWSER_SET, "layout")   # a fresh project: nothing an earlier run left can reach it
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(root)
+    base_url = f"http://127.0.0.1:{args.port}"
+    bench, log_fh = start_bench(args, root, args.port, os.path.join(args.out, "qa_bench_server_layout.log"))
+    try:
+        wait_for_http(f"{base_url}/api/version", 60.0, "bench server startup")
+        ensure_qa_project(base_url)
+        wait_for_all_scans_ready(base_url, args.scan_build_timeout)
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(f"{base_url}/?project={QA_PROJECT_NAME}", wait_until="domcontentloaded")
+            page.wait_for_function("() => Array.isArray(S) && S.length && S.every(s => s.ready)",
+                                   timeout=120_000)
+            page.evaluate("() => savePlacement()")
+            browser.close()
+    finally:
+        bench.terminate()
+        try:
+            bench.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            bench.kill()
+        log_fh.close()
+    with open(os.path.join(root, QA_PROJECT_NAME, "placement.json"), encoding="utf-8") as fh:
+        placement = json.load(fh)
+    if not placement.get("scans"):
+        raise RuntimeError("saving the QA project's starting layout wrote no scans")
+    place_where_they_belong(placement)
+    with open(start, "w", encoding="utf-8") as fh:
+        json.dump(placement, fh, indent=2)
+    print(f"saved the browser QA starting layout: {len(placement['scans'])} scans", flush=True)
+
+
 def run_browser_shard(args, k: int, n: int, port: int, results: dict) -> None:
     """Start a bench on this shard's copy of the QA project, wait for its previews, run this shard's tests on it."""
     root = shard_projects_root(args, k)
     project = QA_PROJECT_NAME
     base_url = f"http://127.0.0.1:{port}"
-    bench_env = dict(os.environ, BENCH_PREVIEW_BUILD_WORKERS="4")
-    # Server output goes to a file, never an unread pipe, which would fill and hang the server.
     log_path = os.path.join(args.out, f"qa_bench_server{'' if k == 0 else f'_{k + 1}'}.log")
-    log_fh = open(log_path, "w", encoding="utf-8")
-    bench = subprocess.Popen([sys.executable, "-m", "open_point_stitch.server", "--scans", args.scans, "--out", args.out,
-                              "--projects", root, "--port", str(port)],
-                             cwd=HERE, stdout=log_fh, stderr=subprocess.STDOUT, text=True, env=bench_env)
+    bench, log_fh = start_bench(args, root, port, log_path)
     timing = {}
     try:
         try:
@@ -273,15 +366,14 @@ def run_browser_layer(args) -> tuple[list[Check], dict]:
     """Every selected browser test must report exactly once across the shards, and each shard must exit cleanly."""
     n = max(1, args.browser_shards)
     # Every bench starts from the same saved layout, so whatever one run leaves behind cannot reach the next.
-    start = os.path.join(args.out, "qa-browser-start-placement.json")
-    first = os.path.join(args.projects, QA_PROJECT_NAME, "placement.json")
-    if not os.path.exists(start) and os.path.exists(first):
-        shutil.copyfile(first, start)
-    if os.path.exists(start):
-        for k in range(n):
-            pdir = os.path.join(shard_projects_root(args, k), QA_PROJECT_NAME)
-            os.makedirs(pdir, exist_ok=True)
-            shutil.copyfile(start, os.path.join(pdir, "placement.json"))
+    browser_scans(args)   # before the shards start, so two of them never write it at once
+    start = os.path.join(args.out, BROWSER_SET, "start-placement.json")
+    if not os.path.exists(start):
+        save_start_layout(args, start)
+    for k in range(n):
+        pdir = os.path.join(shard_projects_root(args, k), QA_PROJECT_NAME)
+        os.makedirs(pdir, exist_ok=True)
+        shutil.copyfile(start, os.path.join(pdir, "placement.json"))
     results: dict = {}
     threads = [threading.Thread(target=run_browser_shard, args=(args, k, n, args.port + k, results))
                for k in range(n)]

@@ -41,6 +41,7 @@ class _Surface:
     holes: tuple = ()          # (a0, a1, b0, b1) in the e1/e2 unit square: no points there
     cut_corner_m: float = 0.0  # the hall's floor and ceiling: nothing where x + y < this (the 45 degree corner)
     edgy: bool = False         # a narrow face whose edges are depth jumps: its edge points smear
+    pattern: object = None     # optional: venue points (n x 3) -> their colours (n x 3), in place of colour
 
 
 def _rect(o, e1, e2, colour, holes=(), cut=0.0, edgy=False) -> _Surface:
@@ -171,6 +172,9 @@ class _Walk:
     stage_light: bool
     stray_share: float         # points floating in mid-air, as a share of the scan
     range_m: float             # nothing farther than this from the phone is captured
+    full_density_m: float = 0.8    # points thin out with distance beyond this
+    texture: float = 0.03          # point-to-point colour variation (0..1): paint is near 0, carpet and wood more
+    blocked: object = None         # optional: (scanner position, points) -> which are hidden; else this venue's walls
 
 
 def _drift(points: np.ndarray, u: np.ndarray, walk: _Walk) -> np.ndarray:
@@ -190,7 +194,7 @@ def _capture_weights(p: np.ndarray, walk: _Walk) -> tuple[np.ndarray, np.ndarray
     dist = np.linalg.norm(p[:, None, :] - walk.path[None, :, :], axis=2)
     seen = dist < walk.range_m
     for j in range(len(walk.path)):
-        seen[:, j] &= ~_blocked(walk.path[j], p, walk.door_open)
+        seen[:, j] &= ~(walk.blocked(walk.path[j], p) if walk.blocked else _blocked(walk.path[j], p, walk.door_open))
     return np.where(seen, 1.0 / np.maximum(dist, 0.3) ** 2, 0.0), dist
 
 
@@ -215,8 +219,9 @@ def _scan(surfaces, walk: _Walk, frame, n_target, rng) -> tuple[np.ndarray, np.n
         ok = total > 0
         p, ab, w, dist, total = p[ok], ab[ok], w[ok], dist[ok], total[ok]
         r_near = np.min(np.where(w > 0, dist, np.inf), axis=1)
-        keep = rng.random(len(p)) < np.minimum(1.0, (0.8 / r_near) ** 1.3)
+        keep = rng.random(len(p)) < np.minimum(1.0, (walk.full_density_m / r_near) ** 1.3)
         p, ab, w, total = p[keep], ab[keep], w[keep], total[keep]
+        base = s.pattern(p) if s.pattern is not None else np.asarray(s.colour)
         pick = (np.cumsum(w, axis=1) / total[:, None] < rng.random(len(p))[:, None]).sum(axis=1)
         eye = walk.path[pick]
         ray = p - eye
@@ -231,12 +236,12 @@ def _scan(surfaces, walk: _Walk, frame, n_target, rng) -> tuple[np.ndarray, np.n
         p = p + rng.normal(0.0, 0.0025, p.shape)
         p = _drift(p, pick / max(k - 1, 1), walk)
         light = 0.75 + 0.25 * np.cos(p[:, 0] * 0.9) * np.cos(p[:, 1] * 0.7)
-        c = np.asarray(s.colour) * walk.exposure * light[:, None]
+        c = base * walk.exposure * light[:, None]
         if walk.stage_light:
             pool = np.exp(-((p[:, 0] - 8.5) ** 2 + (p[:, 1] - 8.5) ** 2) / 3.0)
             c = c * (1 - pool[:, None]) + pool[:, None] * np.array([0.9, 0.2, 0.6])
         pts.append(p)
-        cols.append(np.clip(c + rng.normal(0.0, 0.03, c.shape), 0.0, 1.0))
+        cols.append(np.clip(c + rng.normal(0.0, walk.texture, c.shape), 0.0, 1.0))
     venue, colour = np.concatenate(pts), np.concatenate(cols)
     # Stray points in mid-air around the walk.
     n_stray = int(len(venue) * walk.stray_share)
