@@ -233,7 +233,7 @@ def _walls() -> list[_Surface]:
     # the front door's leaf, closed, and the plinth below the outside walls where the garden drops away
     out.append(_rect((5.5, 0.06, 0), (0.9, 0, 0), (0, 0, 2.05), (0.42, 0.28, 0.18), edgy=True))
     out.append(_rect((0, 3.95, GARDEN_Z), (5, 0, 0), (0, 0, -GARDEN_Z), (0.75, 0.74, 0.72)))
-    out.append(_rect((5.05, 0, GARDEN_Z), (0, 4, 0), (0, 0, -GARDEN_Z), (0.75, 0.74, 0.72)))
+    out.append(_rect((4.95, 0, GARDEN_Z), (0, 4, 0), (0, 0, -GARDEN_Z), (0.75, 0.74, 0.72)))
     return out
 
 
@@ -340,7 +340,8 @@ def _surfaces() -> list[_Surface]:
 
 def _blocker(range_m: float):
     """(scanner position, points) -> which points a wall hides: the straight line to them crosses a wall's centre
-    line anywhere but through an opening. Furniture hides nothing."""
+    line anywhere but through a doorway. Windows are glass, which a phone's LiDAR barely sees through, so they hide
+    what is behind them like the wall does. Furniture hides nothing."""
     segs = []
     for a, b, openings, _ in WALLS:
         a, b = np.array(a, float), np.array(b, float)
@@ -364,6 +365,8 @@ def _blocker(range_m: float):
             z = eye[2] + t * d[:, 2]
             through = np.zeros(len(near), bool)
             for u0, u1, z0, z1 in openings:
+                if z0 > 0:      # a window
+                    continue
                 through |= (u > min(u0, u1)) & (u < max(u0, u1)) & (z > z0) & (z < z1)
             hidden |= hit & ~through
         out[near] = hidden
@@ -379,31 +382,46 @@ def _walk(path, frame, range_m=5.5, drift_yaw=0.3, exposure=1.0, z=0.0) -> tuple
     return walk, frame
 
 
-# One scan per room, each starting or ending a step through its door so that neighbours overlap, in its own raw frame
-# (a phone starts every scan at its own origin and heading, a little off level).
+# One scan per room, numbered in the order they were walked, as a project's scans usually are; each starts or ends a
+# step through its door so that neighbours overlap, in its own raw frame (a phone starts every scan at its own origin
+# and heading, a little off level).
 QA_WALKS = {
-    "living room": _walk([(1.0, 9.0), (3.5, 8.4), (4.2, 6.0), (1.6, 5.0), (0.9, 7.2), (5.7, 5.6)],
+    "01 living room": _walk([(1.0, 9.0), (3.5, 8.4), (4.2, 6.0), (1.6, 5.0), (0.9, 7.2), (5.7, 5.6)],
                          _transform(23.0, 0.3, -0.2, (-2.0, -7.0, -1.4))),
-    "terrace": _walk([(0.8, 7.2, 1.4), (-1.0, 9.0, 1.4), (-3.0, 7.5, 1.4), (-2.5, 5.0, 1.4), (-1.0, 4.4, 1.4),
+    "02 terrace": _walk([(0.8, 7.2, 1.4), (-1.0, 9.0, 1.4), (-3.0, 7.5, 1.4), (-2.5, 5.0, 1.4), (-1.0, 4.4, 1.4),
                       (-1.0, 3.2, 0.5), (0.5, 2.0, 0.2), (3.5, 1.0, 0.2), (-2.5, 0.5, 0.2)],
                      _transform(-71.0, -0.4, 0.3, (4.0, 1.0, -1.4)), range_m=8.0, exposure=1.15, drift_yaw=0.5),
-    "hall": _walk([(5.8, 1.0), (6.0, 3.5), (6.0, 5.7), (8.5, 5.8), (11.0, 5.8), (13.0, 5.8), (10.0, 5.7), (6.2, 5.6)],
+    "03 hall": _walk([(5.8, 1.0), (6.0, 3.5), (6.0, 5.7), (8.5, 5.8), (11.0, 5.8), (13.0, 5.8), (10.0, 5.7), (6.2, 5.6)],
                   _transform(140.0, 0.2, 0.4, (3.0, -2.0, -1.4)), exposure=0.95),
-    "main bedroom": _walk([(6.0, 9.2), (7.0, 8.2), (6.5, 7.2), (6.2, 6.9), (6.2, 5.8)],
+    "04 main bedroom": _walk([(6.0, 9.2), (7.0, 8.2), (6.5, 7.2), (6.2, 6.9), (6.2, 5.8)],
                           _transform(-160.0, -0.3, 0.2, (8.0, 9.0, -1.4)), exposure=0.9),
-    "guest bedroom": _walk([(9.0, 9.2), (10.4, 8.0), (9.5, 7.2), (8.8, 6.9), (8.8, 5.8)],
+    "05 guest bedroom": _walk([(9.0, 9.2), (10.4, 8.0), (9.5, 7.2), (8.8, 6.9), (8.8, 5.8)],
                            _transform(95.0, 0.4, -0.3, (-1.0, 12.0, -1.4)), exposure=1.05),
-    "bathroom": _walk([(12.8, 9.3), (12.0, 8.0), (12.0, 7.0), (11.95, 5.8)],
+    "06 bathroom": _walk([(12.8, 9.3), (12.0, 8.0), (12.0, 7.0), (11.95, 5.8)],
                       _transform(12.0, -0.2, -0.4, (-12.0, -8.0, -1.4))),
-    "kids room": _walk([(12.8, 3.6), (10.5, 2.5), (10.0, 4.3), (9.8, 5.6)],
+    "07 kids room": _walk([(12.8, 3.6), (10.5, 2.5), (10.0, 4.3), (9.8, 5.6)],
                        _transform(-35.0, 0.3, 0.3, (-6.0, 4.0, -1.4)), exposure=1.1),
-    "kitchen": _walk([(12.8, -1.8), (10.0, -0.3), (8.0, 0.5), (7.6, 0.7), (6.2, 0.8)],
+    "08 kitchen": _walk([(12.8, -1.8), (10.0, -0.3), (8.0, 0.5), (7.6, 0.7), (6.2, 0.8)],
                      _transform(-150.0, -0.3, -0.2, (9.0, 2.0, -1.4))),
 }
 
 
-def write_qa_set(folder: str, seed: int = 20261029, n_target: int = 140_000) -> list[str]:
-    """Writes the QA scans (one .pts per QA_WALKS entry) into folder and returns their paths. Same seed, same files."""
+def _within_reach(surfaces: list[_Surface], walk: _Walk) -> list[_Surface]:
+    """The surfaces some part of which is within the walk's range: a scan's points are spread over what it can reach,
+    not the whole flat, so a small room is scanned as densely as a big one."""
+    out = []
+    for s in surfaces:
+        corners = s.origin + np.array([[0, 0], [1, 0], [0, 1], [1, 1]]) @ np.stack([s.e1, s.e2])
+        lo, hi = corners.min(axis=0), corners.max(axis=0)
+        gap = np.linalg.norm(np.maximum(0, np.maximum(lo - walk.path, walk.path - hi)), axis=1)
+        if gap.min() < walk.range_m:
+            out.append(s)
+    return out
+
+
+def write_qa_set(folder: str, seed: int = 20261029, per_m2: float = 1100.0) -> list[str]:
+    """Writes the QA scans (one .pts per QA_WALKS entry) into folder and returns their paths. per_m2: candidate points
+    per square metre of what a walk can reach, before distance and line of sight thin them. Same seed, same files."""
     from open_point_stitch.pts_file import write_pts
 
     rng = np.random.default_rng(seed)
@@ -411,7 +429,9 @@ def write_qa_set(folder: str, seed: int = 20261029, n_target: int = 140_000) -> 
     os.makedirs(folder, exist_ok=True)
     paths = []
     for name, (walk, frame) in QA_WALKS.items():
-        pts, cols = _scan(surfaces, walk, frame, n_target, rng)
+        near = _within_reach(surfaces, walk)
+        area = sum(float(np.linalg.norm(np.cross(s.e1, s.e2))) for s in near)
+        pts, cols = _scan(near, walk, frame, int(per_m2 * area / 5.95), rng)
         path = os.path.join(folder, f"{name}.pts")
         write_pts(path, pts, cols, precision=4)
         paths.append(path)

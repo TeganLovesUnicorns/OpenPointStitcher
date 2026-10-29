@@ -188,7 +188,7 @@ def wait_for_all_scans_ready(base_url: str, timeout_s: float) -> tuple[float, in
 
 # The browser layer runs on generated scans (tests/synthetic_apartment.py), the same on every machine, so it needs no
 # real scans. Bump the version when the scan set changes: a new folder means no project or cache from the old set.
-BROWSER_SET = "browser-v4"
+BROWSER_SET = "browser-v6"
 
 
 def _apartment():
