@@ -5151,6 +5151,16 @@ _CHROMIUM_LAUNCH_ARGS = [
 ]
 
 
+# BENCH_BROWSER=firefox runs the suite in Firefox (its Playwright build must be installed); Chromium otherwise.
+BENCH_BROWSER = os.environ.get("BENCH_BROWSER", "chromium")
+
+
+def _launch(pw):
+    if BENCH_BROWSER == "chromium":
+        return pw.chromium.launch(headless=True, args=_CHROMIUM_LAUNCH_ARGS)
+    return getattr(pw, BENCH_BROWSER).launch(headless=True)
+
+
 def _run_one_in_new_browser(name: str) -> int:
     """Run one named test in its own fresh browser. Only entered via --run-isolated NAME."""
     # No "PASS "/"FAIL " lines printed here: the parent process (below) prints
@@ -5160,7 +5170,7 @@ def _run_one_in_new_browser(name: str) -> int:
         print(f"error: {name!r} not a known test in TESTS", file=sys.stderr)
         return 1
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True, args=_CHROMIUM_LAUNCH_ARGS)
+        browser = _launch(pw)
         page = browser.new_page(viewport={"width": 1400, "height": 900})
         _js_coverage_start(page)
         try:
@@ -5221,7 +5231,7 @@ def main() -> int:
     old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True, args=_CHROMIUM_LAUNCH_ARGS)
+            browser = _launch(pw)
             for fn in _selected_tests():
                 if fn.__name__ in ISOLATED_TESTS:
                     t0 = time.time()

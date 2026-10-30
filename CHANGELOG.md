@@ -9,6 +9,8 @@ patch for fixes. One line per change.
   (living room, terrace and garden, hall, two bedrooms, bathroom, kids' room, kitchen), each with its own paint,
   floors and furniture, and starts every test from the flat as it really is.
 - `stitch.ps1 qa` and `stitch.sh qa` run without a `scans` folder.
+- The browser tests can drive Firefox instead of Chromium (`BENCH_BROWSER=firefox`), on a machine with a display:
+  Firefox has no WebGL when headless in the QA container.
 - The Floor height panel finds the floor and ceiling of a room of ordinary height: its bands now count only flat
   surfaces, where before the walls filled every height and merged everything into one band (no ceiling found).
   Previews rebuild once to pick this up.
